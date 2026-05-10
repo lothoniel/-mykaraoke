@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import * as db from '../../hooks/useDB'
 import { useSpotify } from '../../hooks/useSpotify'
+import { fetchLyrics, type LrclibResult } from '../../lib/lrclib'
 import { extractVideoId } from '../../lib/youtube'
 import { generateId } from '../../lib/id'
 import type { Screen } from '../../types'
@@ -17,6 +18,8 @@ export default function AddSongScreen({ navigate }: Props) {
   const [coverArt, setCoverArt] = useState('')
   const [lyricsText, setLyricsText] = useState('')
   const [error, setError] = useState('')
+  const [fetchStatus, setFetchStatus] = useState<'idle' | 'loading' | 'notfound' | 'confirm'>('idle')
+  const [pendingResult, setPendingResult] = useState<LrclibResult | null>(null)
 
   // Spotify-cached metadata
   const [spotifyTrackId, setSpotifyTrackId] = useState<string | undefined>()
@@ -38,6 +41,26 @@ export default function AddSongScreen({ navigate }: Props) {
     setReleaseDate(result.releaseDate)
     setPopularity(result.popularity)
     setGenres(result.genres)
+  }
+
+  async function handleFetchLyrics() {
+    if (!title.trim() && !artist.trim()) return
+    setFetchStatus('loading')
+    const result = await fetchLyrics(title, artist, duration ? duration / 1000 : undefined)
+    if (!result) { setFetchStatus('notfound'); return }
+    if (lyricsText.trim()) {
+      setPendingResult(result)
+      setFetchStatus('confirm')
+    } else {
+      setLyricsText(result.lyrics.join('\n'))
+      setFetchStatus('idle')
+    }
+  }
+
+  function applyResult(result: LrclibResult) {
+    setLyricsText(result.lyrics.join('\n'))
+    setFetchStatus('idle')
+    setPendingResult(null)
   }
 
   async function handleSave() {
@@ -163,14 +186,44 @@ export default function AddSongScreen({ navigate }: Props) {
       </div>
 
       <div className="mb-6">
-        <label className="block text-xs font-semibold uppercase text-muted mb-2 tracking-wide">
-          Lyrics <span className="text-red-400">*</span>
-        </label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs font-semibold uppercase text-muted tracking-wide">
+            Lyrics <span className="text-red-400">*</span>
+          </label>
+          <button
+            className="text-xs px-2 py-1 bg-lavender-light rounded-lg font-semibold disabled:opacity-40"
+            onClick={handleFetchLyrics}
+            disabled={fetchStatus === 'loading' || (!title.trim() && !artist.trim())}
+          >
+            {fetchStatus === 'loading' ? 'Searching…' : 'Fetch from LRCLIB'}
+          </button>
+        </div>
+
+        {fetchStatus === 'notfound' && (
+          <p className="text-xs text-muted mb-2">No lyrics found for this song.</p>
+        )}
+        {fetchStatus === 'confirm' && pendingResult && (
+          <div className="bg-lavender-soft rounded-lg p-3 mb-2 text-xs">
+            <p className="font-semibold mb-1">
+              {pendingResult.timings ? 'Synced lyrics found — timing data will be imported too.' : 'Plain lyrics found (no timing data).'}
+            </p>
+            <p className="text-muted mb-2">Replace your current lyrics?</p>
+            <div className="flex gap-2">
+              <button className="px-3 py-1 bg-lavender rounded font-semibold" onClick={() => applyResult(pendingResult)}>
+                Yes, replace
+              </button>
+              <button className="px-3 py-1 bg-white rounded font-semibold" onClick={() => { setFetchStatus('idle'); setPendingResult(null) }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         <textarea
           className="w-full px-3 py-3 bg-white border border-lavender-light rounded-lg text-sm focus:outline-none focus:border-lavender resize-y min-h-40 font-mono"
-          placeholder="Paste lyrics here — one line per lyric…"
+          placeholder="Paste lyrics here, or use Fetch from LRCLIB…"
           value={lyricsText}
-          onChange={(e) => setLyricsText(e.target.value)}
+          onChange={(e) => { setLyricsText(e.target.value); setFetchStatus('idle') }}
         />
         <p className="text-xs text-muted mt-1">
           {lyricsText.split('\n').filter(Boolean).length} lines

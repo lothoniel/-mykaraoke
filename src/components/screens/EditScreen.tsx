@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import * as db from '../../hooks/useDB'
+import { fetchLyrics, type LrclibResult } from '../../lib/lrclib'
 import { extractVideoId } from '../../lib/youtube'
 import type { Screen, Song } from '../../types'
 
@@ -15,6 +16,8 @@ export default function EditScreen({ songId, navigate }: Props) {
   const [lyricsText, setLyricsText] = useState('')
   const [error, setError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [fetchStatus, setFetchStatus] = useState<'idle' | 'loading' | 'notfound' | 'confirm'>('idle')
+  const [pendingResult, setPendingResult] = useState<LrclibResult | null>(null)
 
   useEffect(() => {
     db.getSong(songId).then((s) => {
@@ -28,6 +31,29 @@ export default function EditScreen({ songId, navigate }: Props) {
       setLyricsText(s.lyrics.join('\n'))
     })
   }, [songId])
+
+  async function handleFetchLyrics() {
+    if (!song) return
+    setFetchStatus('loading')
+    const result = await fetchLyrics(song.title, song.artist)
+    if (!result) { setFetchStatus('notfound'); return }
+    if (lyricsText.trim()) {
+      setPendingResult(result)
+      setFetchStatus('confirm')
+    } else {
+      applyResult(result)
+    }
+  }
+
+  function applyResult(result: LrclibResult) {
+    setLyricsText(result.lyrics.join('\n'))
+    if (result.timings) {
+      db.updateSong(songId, { timings: result.timings })
+      setSong((s) => s ? { ...s, timings: result.timings! } : s)
+    }
+    setFetchStatus('idle')
+    setPendingResult(null)
+  }
 
   async function handleSave() {
     setError('')
@@ -133,13 +159,47 @@ export default function EditScreen({ songId, navigate }: Props) {
       </div>
 
       <div className="mb-6">
-        <label className="block text-xs font-semibold uppercase text-muted mb-2 tracking-wide">
-          Lyrics
-        </label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs font-semibold uppercase text-muted tracking-wide">Lyrics</label>
+          <button
+            className="text-xs px-2 py-1 bg-lavender-light rounded-lg font-semibold disabled:opacity-40"
+            onClick={handleFetchLyrics}
+            disabled={fetchStatus === 'loading'}
+          >
+            {fetchStatus === 'loading' ? 'Searching…' : 'Fetch from LRCLIB'}
+          </button>
+        </div>
+
+        {fetchStatus === 'notfound' && (
+          <p className="text-xs text-muted mb-2">No lyrics found for this song.</p>
+        )}
+        {fetchStatus === 'confirm' && pendingResult && (
+          <div className="bg-lavender-soft rounded-lg p-3 mb-2 text-xs">
+            <p className="font-semibold mb-1">
+              {pendingResult.timings ? 'Synced lyrics found — will also import timing data.' : 'Plain lyrics found (no timing data).'}
+            </p>
+            <p className="text-muted mb-2">Replace your current lyrics?</p>
+            <div className="flex gap-2">
+              <button
+                className="px-3 py-1 bg-lavender rounded font-semibold"
+                onClick={() => applyResult(pendingResult)}
+              >
+                Yes, replace
+              </button>
+              <button
+                className="px-3 py-1 bg-white rounded font-semibold"
+                onClick={() => { setFetchStatus('idle'); setPendingResult(null) }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         <textarea
           className="w-full px-3 py-3 bg-white border border-lavender-light rounded-lg text-sm focus:outline-none focus:border-lavender resize-y min-h-40 font-mono"
           value={lyricsText}
-          onChange={(e) => setLyricsText(e.target.value)}
+          onChange={(e) => { setLyricsText(e.target.value); setFetchStatus('idle') }}
         />
       </div>
 
