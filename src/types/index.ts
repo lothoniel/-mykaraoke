@@ -12,7 +12,11 @@ export type Song = {
   youtubeLink?: string
   coverArt?: string
   lyrics: string[]
+  lyricsRomaji?: string[]
+  lyricsTranslation?: string[]
   timings: Timing[]
+  timingsRomaji?: Timing[]
+  timingsTranslation?: Timing[]
   isFavorite: boolean
   createdAt: Date
   // Spotify-fetched metadata (cached at add time)
@@ -26,7 +30,7 @@ export type Screen =
   | { name: 'home' }
   | { name: 'library' }
   | { name: 'add' }
-  | { name: 'timing'; songId: string }
+  | { name: 'timing'; songId: string; version?: 'original' | 'romaji' | 'translation' }
   | { name: 'playback'; songId: string }
   | { name: 'details'; songId: string }
   | { name: 'edit'; songId: string }
@@ -38,6 +42,7 @@ export type SpotifyToken = {
   accessToken: string
   expiresAt: number // Date.now() ms
   refreshToken?: string
+  scope?: string // space-separated scopes granted by Spotify
 }
 
 export type SpotifyPlaylistSummary = {

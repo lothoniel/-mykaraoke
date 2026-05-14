@@ -4,9 +4,10 @@ import { useYouTube } from '../../hooks/useYouTube'
 import { extractVideoId, formatSeconds } from '../../lib/youtube'
 import type { Screen, Song, Timing } from '../../types'
 
-type Props = { songId: string; navigate: (s: Screen) => void }
+type Props = { songId: string; navigate: (s: Screen) => void; version?: 'original' | 'romaji' | 'translation' }
 
-export default function TimingScreen({ songId, navigate }: Props) {
+export default function TimingScreen({ songId, navigate, version }: Props) {
+  const activeVersion = version ?? 'original'
   const uid = useId().replace(/:/g, '')
   const playerId = `yt-player-timing-${uid}`
 
@@ -22,17 +23,20 @@ export default function TimingScreen({ songId, navigate }: Props) {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const videoId = song ? (extractVideoId(song.youtubeLink ?? '') ?? null) : null
-  const { ready, playerState, getCurrentTime, seekTo } = useYouTube(playerId, videoId)
+  const { ready, playerState, playerError, getCurrentTime, seekTo } = useYouTube(playerId, videoId)
 
   useEffect(() => {
     db.getSong(songId).then((s) => {
       if (!s) return
       setSong(s)
-      setTimings(s.timings ?? [])
+      const t =
+        activeVersion === 'romaji' ? (s.timingsRomaji ?? [])
+        : activeVersion === 'translation' ? (s.timingsTranslation ?? [])
+        : (s.timings ?? [])
+      setTimings(t)
     })
-  }, [songId])
+  }, [songId, activeVersion])
 
-  // Poll current time while playing for live preview
   useEffect(() => {
     if (playerState === 'playing') {
       intervalRef.current = setInterval(() => {
@@ -46,11 +50,15 @@ export default function TimingScreen({ songId, navigate }: Props) {
     }
   }, [playerState, getCurrentTime])
 
+  const activeLyrics = !song ? [] :
+    activeVersion === 'romaji' ? (song.lyricsRomaji ?? song.lyrics)
+    : activeVersion === 'translation' ? (song.lyricsTranslation ?? song.lyrics)
+    : song.lyrics
+
   const timedSet = song ? new Set(timings.map((t) => t.lineIndex)) : new Set<number>()
-  const nextToMark = song ? song.lyrics.findIndex((_, i) => !timedSet.has(i)) : -1
+  const nextToMark = song ? activeLyrics.findIndex((_, i) => !timedSet.has(i)) : -1
   const allDone = nextToMark === -1 && song !== null
 
-  // Active lyric based on current playback position
   const sortedTimings = [...timings].sort((a, b) => a.timestamp - b.timestamp)
   let activeLine = -1
   for (const t of sortedTimings) {
@@ -58,7 +66,6 @@ export default function TimingScreen({ songId, navigate }: Props) {
     else break
   }
 
-  // Auto-scroll to next-to-mark line only when paused
   useEffect(() => {
     if (playerState !== 'playing') {
       currentRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -67,7 +74,7 @@ export default function TimingScreen({ songId, navigate }: Props) {
 
   function updateTimings(next: Timing[]) {
     setTimings(next)
-    db.updateTimings(songId, next)
+    db.updateTimings(songId, next, activeVersion)
   }
 
   function handleAdjust(lineIndex: number, delta: number) {
@@ -96,10 +103,14 @@ export default function TimingScreen({ songId, navigate }: Props) {
 
   function handleEditSave(index: number) {
     if (!song) return
-    const updatedLyrics = [...song.lyrics]
-    updatedLyrics[index] = editingText
-    db.updateSong(songId, { lyrics: updatedLyrics })
-    setSong((s) => (s ? { ...s, lyrics: updatedLyrics } : s))
+    const lyricsField =
+      activeVersion === 'romaji' ? 'lyricsRomaji'
+      : activeVersion === 'translation' ? 'lyricsTranslation'
+      : 'lyrics'
+    const updated = [...activeLyrics]
+    updated[index] = editingText
+    db.updateSong(songId, { [lyricsField]: updated })
+    setSong((s) => s ? { ...s, [lyricsField]: updated } : s)
     setEditingLine(null)
   }
 
@@ -132,37 +143,61 @@ export default function TimingScreen({ songId, navigate }: Props) {
   if (!song) return null
 
   return (
-    <div className="flex bg-canvas" style={{ height: '100dvh' }}>
+    <div className="flex flex-col bg-canvas" style={{ height: 'calc(100dvh - 56px)' }}>
+      {/* Step indicator */}
+      <div className="flex items-center gap-2 px-4 pt-3 pb-2 border-b border-border flex-shrink-0">
+        <span className="bg-coral text-white text-xs font-bold px-2.5 py-1 rounded-full">
+          Step 2 of 2
+        </span>
+        <span className="text-xs text-muted">Sync Lyrics with Audio</span>
+        {activeVersion !== 'original' && (
+          <span className="bg-coral-soft text-coral text-xs font-semibold px-2 py-0.5 rounded-full capitalize">
+            {activeVersion}
+          </span>
+        )}
+        <span className="ml-auto text-xs text-muted truncate max-w-[200px]">{song.title}</span>
+      </div>
 
+      <div className="flex flex-1 min-h-0">
       {/* Left column: video + live preview + controls */}
-      <div className="flex flex-col w-2/5 min-w-[280px] border-r border-lavender-soft p-4 gap-3">
-
+      <div className="flex flex-col w-2/5 min-w-[280px] border-r border-border p-4 gap-3">
         {/* Video */}
         {videoId ? (
-          <div className="w-full aspect-video bg-black rounded-xl overflow-hidden yt-player flex-shrink-0">
+          <div className="relative w-full aspect-video bg-black rounded-2xl overflow-hidden yt-player flex-shrink-0">
             <div id={playerId} className="w-full h-full" />
+            {playerError !== null && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-ink/90 rounded-2xl gap-2 px-4 text-center">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#E8694A" strokeWidth="1.5">
+                  <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                <p className="text-white text-xs font-semibold">
+                  {playerError === 100 ? 'Video not found.' : 'Embedding disabled by video owner.'}
+                </p>
+                <p className="text-muted text-xs">Try a different YouTube link in the song editor.</p>
+              </div>
+            )}
           </div>
         ) : (
-          <div className="w-full aspect-video bg-gray-200 rounded-xl flex items-center justify-center text-muted flex-shrink-0">
+          <div className="w-full aspect-video bg-coral-soft rounded-2xl flex items-center justify-center text-muted flex-shrink-0">
             No YouTube link
           </div>
         )}
 
         {/* Live lyric preview */}
-        <div className="bg-black rounded-xl px-3 py-3 flex-shrink-0 min-h-[60px] flex items-center justify-center">
-          {activeLine >= 0 && song.lyrics[activeLine] ? (
+        <div className="bg-ink rounded-2xl px-3 py-3 flex-shrink-0 min-h-[60px] flex items-center justify-center">
+          {activeLine >= 0 && activeLyrics[activeLine] ? (
             <p className="text-white text-center text-sm font-semibold leading-snug">
-              {song.lyrics[activeLine]}
+              {activeLyrics[activeLine]}
             </p>
           ) : (
-            <p className="text-gray-500 text-center text-xs">
+            <p className="text-muted text-center text-xs">
               {timings.length > 0 ? '▶ play to preview sync' : '▶ lyrics appear here as you play'}
             </p>
           )}
         </div>
 
         {/* Instruction */}
-        <div className="bg-lavender-soft px-3 py-2 rounded-lg text-xs text-gray-600 flex-shrink-0">
+        <div className="bg-coral-soft px-3 py-2 rounded-xl text-xs text-ink flex-shrink-0">
           Press <strong>Mark Time</strong> when the highlighted line starts.
           Tap a timestamp to seek to it.
           {!ready && videoId && <span className="ml-1 text-muted">(Loading…)</span>}
@@ -171,29 +206,30 @@ export default function TimingScreen({ songId, navigate }: Props) {
         {/* Controls */}
         <div className="flex gap-2 flex-shrink-0">
           <button
-            className="flex-1 py-3 bg-lavender text-ink font-bold text-sm rounded-lg active:bg-lavender-dark disabled:opacity-40"
+            className="flex-1 py-3 bg-coral text-white font-bold text-sm rounded-xl hover:bg-coral-dark transition-colors disabled:opacity-40"
             onClick={handleMarkTime}
             disabled={!ready || allDone}
           >
             {allDone ? '✓ All timed!' : '▶ Mark Time'}
           </button>
           <button
-            className="px-4 py-3 bg-lavender-light text-ink font-semibold text-sm rounded-lg active:bg-lavender disabled:opacity-40"
+            className="px-4 py-3 border border-border text-ink font-semibold text-sm rounded-xl hover:bg-coral-soft transition-colors disabled:opacity-40"
             onClick={handleUndo}
             disabled={timings.length === 0}
           >
             Undo
           </button>
         </div>
+
         <div className="flex gap-2 flex-shrink-0">
           <button
-            className="flex-1 py-2.5 bg-lavender text-ink font-semibold text-sm rounded-lg active:bg-lavender-dark"
+            className="flex-1 py-2.5 bg-coral text-white font-semibold text-sm rounded-xl hover:bg-coral-dark transition-colors"
             onClick={() => navigate({ name: 'playback', songId })}
           >
             Done: Play
           </button>
           <button
-            className="px-4 py-2.5 bg-lavender-light text-ink font-semibold text-sm rounded-lg"
+            className="px-4 py-2.5 border border-border text-ink font-semibold text-sm rounded-xl hover:bg-coral-soft transition-colors"
             onClick={() => navigate({ name: 'edit', songId })}
           >
             ← Back
@@ -221,8 +257,8 @@ export default function TimingScreen({ songId, navigate }: Props) {
       </div>
 
       {/* Right column: lyric list */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
-        {song.lyrics.map((line, i) => {
+      <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
+        {activeLyrics.map((line, i) => {
           const timing = timings.find((t) => t.lineIndex === i)
           const isCurrent = i === nextToMark
           const isDone = timing !== undefined
@@ -233,15 +269,15 @@ export default function TimingScreen({ songId, navigate }: Props) {
             <div
               key={i}
               ref={isCurrent ? currentRowRef : null}
-              className={`flex flex-col border-b border-lavender-soft last:border-0 rounded-lg transition-colors ${
-                isActive ? 'bg-lavender' : isCurrent ? 'bg-lavender-soft' : ''
+              className={`flex flex-col border-b border-border last:border-0 rounded-lg transition-colors ${
+                isActive ? 'bg-coral-light' : isCurrent ? 'bg-coral-soft' : ''
               }`}
             >
               <div className="flex gap-3 py-3 items-center px-1">
-                {/* Timestamp — click to seek + open fine-tune */}
+                {/* Timestamp */}
                 <div
-                  className={`w-14 font-mono text-xs font-semibold text-lavender-dark flex-shrink-0 ${
-                    isDone ? 'cursor-pointer hover:text-ink' : ''
+                  className={`w-14 font-mono text-xs font-semibold flex-shrink-0 ${
+                    isDone ? 'text-coral cursor-pointer hover:text-ink' : 'text-muted'
                   }`}
                   onClick={
                     isDone
@@ -255,10 +291,10 @@ export default function TimingScreen({ songId, navigate }: Props) {
                   {isDone ? formatSeconds(timing!.timestamp) : isCurrent ? '??:??' : ''}
                 </div>
 
-                {/* Lyric text — click to edit inline */}
+                {/* Lyric text */}
                 <div
                   className={`flex-1 text-sm leading-snug ${
-                    isActive ? 'font-bold text-ink' : isCurrent ? 'font-semibold text-ink' : ''
+                    isActive ? 'font-bold text-ink' : isCurrent ? 'font-semibold text-ink' : 'text-ink'
                   }`}
                 >
                   {editingLine === i ? (
@@ -268,7 +304,7 @@ export default function TimingScreen({ songId, navigate }: Props) {
                       onChange={(e) => setEditingText(e.target.value)}
                       onBlur={() => handleEditSave(i)}
                       onKeyDown={(e) => e.key === 'Enter' && handleEditSave(i)}
-                      className="w-full bg-white border border-lavender rounded px-1 text-sm"
+                      className="w-full bg-white border border-border rounded-lg px-1 text-sm focus:outline-none focus:ring-1 focus:ring-coral"
                     />
                   ) : (
                     <span className="cursor-text" onClick={() => handleEditStart(i, line)}>
@@ -286,7 +322,7 @@ export default function TimingScreen({ songId, navigate }: Props) {
                       ✕
                     </button>
                   ) : isCurrent && !isDone ? (
-                    <span className="text-xs text-lavender-dark">next</span>
+                    <span className="text-xs text-coral font-semibold">next</span>
                   ) : null}
                 </div>
               </div>
@@ -297,14 +333,14 @@ export default function TimingScreen({ songId, navigate }: Props) {
                   {([-0.5, -0.1, 0.1, 0.5] as const).map((delta) => (
                     <button
                       key={delta}
-                      className="px-2 py-1 text-xs bg-lavender-light rounded font-mono"
+                      className="px-2 py-1 text-xs bg-coral-light rounded-lg font-mono hover:bg-coral hover:text-white transition-colors"
                       onClick={() => handleAdjust(i, delta)}
                     >
                       {delta > 0 ? '+' : ''}{delta}s
                     </button>
                   ))}
                   <button
-                    className="px-2 py-1 text-xs bg-lavender rounded font-semibold disabled:opacity-40"
+                    className="px-2 py-1 text-xs bg-coral text-white rounded-lg font-semibold disabled:opacity-40"
                     onClick={() => handleRemark(i)}
                     disabled={!ready}
                   >
@@ -321,6 +357,7 @@ export default function TimingScreen({ songId, navigate }: Props) {
             </div>
           )
         })}
+      </div>
       </div>
     </div>
   )

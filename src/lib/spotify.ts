@@ -71,11 +71,11 @@ export async function getTrackMetadata(trackId: string): Promise<SpotifyTrackMet
   return {
     title: data.name,
     artist: data.artists.map((a) => a.name).join(', '),
-    coverArt: data.album.images[0]?.url ?? '',
+    coverArt: data.album.images?.[0]?.url ?? '',
     duration: data.duration_ms,
     releaseDate: data.album.release_date,
     popularity: data.popularity,
-    artistId: data.artists[0]?.id ?? '',
+    artistId: data.artists?.[0]?.id ?? '',
   }
 }
 
@@ -96,7 +96,7 @@ const PKCE_TOKEN_KEY = 'spotify_oauth_token'
 const PKCE_VERIFIER_KEY = 'spotify_pkce_verifier'
 const PKCE_STATE_KEY = 'spotify_pkce_state'
 const REDIRECT_URI = 'http://127.0.0.1:5174/'
-const OAUTH_SCOPES = 'user-library-read playlist-read-private playlist-read-collaborative'
+const OAUTH_SCOPES = 'user-library-read playlist-read-private playlist-read-collaborative user-read-playback-state user-modify-playback-state'
 
 function generateVerifier(length = 64): string {
   const arr = crypto.getRandomValues(new Uint8Array(length))
@@ -150,11 +150,12 @@ export async function exchangeCodeForToken(code: string, state: string): Promise
     }),
   })
   if (!res.ok) return false
-  const data = await res.json() as { access_token: string; expires_in: number; refresh_token: string }
+  const data = await res.json() as { access_token: string; expires_in: number; refresh_token: string; scope?: string }
   const token: SpotifyToken = {
     accessToken: data.access_token,
     expiresAt: Date.now() + data.expires_in * 1000,
     refreshToken: data.refresh_token,
+    scope: data.scope,
   }
   localStorage.setItem(PKCE_TOKEN_KEY, JSON.stringify(token))
   sessionStorage.removeItem(PKCE_VERIFIER_KEY)
@@ -171,6 +172,8 @@ export function getStoredOAuthToken(): SpotifyToken | null {
 export function clearOAuthToken(): void {
   localStorage.removeItem(PKCE_TOKEN_KEY)
 }
+
+export const RELINK_REQUIRED = 'RELINK_REQUIRED'
 
 async function getOAuthAccessToken(): Promise<string> {
   let token = getStoredOAuthToken()
@@ -213,12 +216,22 @@ function rawTrackToSummary(t: SpotifyRawTrack): SpotifyTrackSummary {
     id: t.id,
     title: t.name,
     artist: t.artists.map((a) => a.name).join(', '),
-    coverArt: t.album.images[0]?.url,
+    coverArt: t.album.images?.[0]?.url,
     duration: t.duration_ms,
     releaseDate: t.album.release_date,
     popularity: t.popularity,
-    artistId: t.artists[0]?.id ?? '',
+    artistId: t.artists?.[0]?.id ?? '',
   }
+}
+
+export async function getArtistTopTracks(artistId: string): Promise<SpotifyTrackSummary[]> {
+  const token = await getToken()
+  const res = await fetch(`https://api.spotify.com/v1/artists/${artistId}/top-tracks?market=US`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) return []
+  const data = await res.json() as { tracks: SpotifyRawTrack[] }
+  return data.tracks.slice(0, 5).map(rawTrackToSummary)
 }
 
 export async function getUserPlaylists(): Promise<SpotifyPlaylistSummary[]> {
@@ -228,14 +241,16 @@ export async function getUserPlaylists(): Promise<SpotifyPlaylistSummary[]> {
   })
   if (!res.ok) throw new Error('Failed to fetch playlists')
   const data = await res.json() as {
-    items: Array<{ id: string; name: string; tracks: { total: number }; images: Array<{ url: string }> }>
+    items: Array<{ id: string; name: string; owner: { id: string }; tracks: { total: number }; images: Array<{ url: string }> }>
   }
-  return data.items.map((p) => ({
-    id: p.id,
-    name: p.name,
-    trackCount: p.tracks.total,
-    imageUrl: p.images[0]?.url,
-  }))
+  return data.items
+    .filter((p) => p.owner?.id !== 'spotify')
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      trackCount: p.tracks?.total ?? 0,
+      imageUrl: p.images?.[0]?.url,
+    }))
 }
 
 export async function getLikedSongs(): Promise<SpotifyTrackSummary[]> {
@@ -253,7 +268,56 @@ export async function getPlaylistTracks(playlistId: string): Promise<SpotifyTrac
   const res = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`, {
     headers: { Authorization: `Bearer ${token}` },
   })
-  if (!res.ok) throw new Error('Failed to fetch playlist tracks')
+  if (res.status === 403) {
+    const token = getStoredOAuthToken()
+    const hasScope = token?.scope?.includes('playlist-read-private') ?? false
+    if (!hasScope) throw new Error(RELINK_REQUIRED)
+    throw new Error("This playlist can't be accessed — it may be private or restricted by Spotify.")
+  }
+  if (!res.ok) throw new Error(`Failed to fetch playlist tracks (${res.status})`)
   const data = await res.json() as { items: Array<{ track: SpotifyRawTrack | null }> }
-  return data.items.flatMap((i) => (i.track ? [rawTrackToSummary(i.track)] : []))
+  return (data.items ?? []).flatMap((i) => (i.track ? [rawTrackToSummary(i.track)] : []))
+}
+
+export async function startPlayback(trackId: string): Promise<'ok' | 'no_device' | 'auth_error'> {
+  let token: string
+  try { token = await getOAuthAccessToken() } catch { return 'auth_error' }
+
+  let deviceId: string | null = null
+  const devRes = await fetch('https://api.spotify.com/v1/me/player/devices', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (devRes.ok) {
+    const { devices } = await devRes.json() as { devices: Array<{ id: string; is_active: boolean }> }
+    const device = devices.find((d) => d.is_active) ?? devices[0]
+    deviceId = device?.id ?? null
+  }
+
+  if (!deviceId) return 'no_device'
+
+  const res = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ uris: [`spotify:track:${trackId}`] }),
+  })
+  if (res.status === 204 || res.status === 202) return 'ok'
+  if (res.status === 403 || res.status === 401) return 'auth_error'
+  return 'no_device'
+}
+
+export async function getPlaybackState(): Promise<
+  { progress_ms: number; is_playing: boolean } | 'auth_error' | null
+> {
+  let token: string
+  try { token = await getOAuthAccessToken() } catch { return null }
+  const res = await fetch('https://api.spotify.com/v1/me/player', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (res.status === 403) return 'auth_error'
+  if (res.status === 204 || !res.ok) return null
+  const data = await res.json() as { progress_ms: number; is_playing: boolean }
+  return { progress_ms: data.progress_ms, is_playing: data.is_playing }
 }

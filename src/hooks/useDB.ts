@@ -18,8 +18,16 @@ export async function updateSong(id: string, updates: Partial<Song>): Promise<vo
   await db.songs.update(id, updates)
 }
 
-export async function updateTimings(id: string, timings: Timing[]): Promise<void> {
-  await db.songs.update(id, { timings })
+export async function updateTimings(
+  id: string,
+  timings: Timing[],
+  version: 'original' | 'romaji' | 'translation' = 'original'
+): Promise<void> {
+  const field =
+    version === 'romaji' ? 'timingsRomaji'
+    : version === 'translation' ? 'timingsTranslation'
+    : 'timings'
+  await db.songs.update(id, { [field]: timings })
 }
 
 export async function deleteSong(id: string): Promise<void> {

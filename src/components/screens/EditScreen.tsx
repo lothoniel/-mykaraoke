@@ -4,9 +4,9 @@ import { fetchLyrics, type LrclibResult } from '../../lib/lrclib'
 import { extractVideoId } from '../../lib/youtube'
 import type { Screen, Song } from '../../types'
 
-type Props = { songId: string; navigate: (s: Screen) => void }
+type Props = { songId: string; navigate: (s: Screen) => void; goBack: () => void }
 
-export default function EditScreen({ songId, navigate }: Props) {
+export default function EditScreen({ songId, navigate, goBack }: Props) {
   const [song, setSong] = useState<Song | null>(null)
   const [title, setTitle] = useState('')
   const [artist, setArtist] = useState('')
@@ -14,6 +14,9 @@ export default function EditScreen({ songId, navigate }: Props) {
   const [youtubeLink, setYoutubeLink] = useState('')
   const [coverArt, setCoverArt] = useState('')
   const [lyricsText, setLyricsText] = useState('')
+  const [lyricsRomajiText, setLyricsRomajiText] = useState('')
+  const [lyricsTranslationText, setLyricsTranslationText] = useState('')
+  const [lyricsTab, setLyricsTab] = useState<'original' | 'romaji' | 'translation'>('original')
   const [error, setError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [fetchStatus, setFetchStatus] = useState<'idle' | 'loading' | 'notfound' | 'confirm'>('idle')
@@ -29,6 +32,8 @@ export default function EditScreen({ songId, navigate }: Props) {
       setYoutubeLink(s.youtubeLink ?? '')
       setCoverArt(s.coverArt ?? '')
       setLyricsText(s.lyrics.join('\n'))
+      setLyricsRomajiText(s.lyricsRomaji?.join('\n') ?? '')
+      setLyricsTranslationText(s.lyricsTranslation?.join('\n') ?? '')
     })
   }, [songId])
 
@@ -49,7 +54,7 @@ export default function EditScreen({ songId, navigate }: Props) {
     setLyricsText(result.lyrics.join('\n'))
     if (result.timings) {
       db.updateSong(songId, { timings: result.timings })
-      setSong((s) => s ? { ...s, timings: result.timings! } : s)
+      setSong((s) => (s ? { ...s, timings: result.timings! } : s))
     }
     setFetchStatus('idle')
     setPendingResult(null)
@@ -74,6 +79,12 @@ export default function EditScreen({ songId, navigate }: Props) {
       youtubeLink: youtubeLink.trim(),
       coverArt: coverArt.trim() || undefined,
       lyrics,
+      lyricsRomaji: lyricsRomajiText.trim()
+        ? lyricsRomajiText.split('\n').map((l) => l.trim()).filter(Boolean)
+        : undefined,
+      lyricsTranslation: lyricsTranslationText.trim()
+        ? lyricsTranslationText.split('\n').map((l) => l.trim()).filter(Boolean)
+        : undefined,
     })
 
     navigate({ name: 'playback', songId })
@@ -86,108 +97,104 @@ export default function EditScreen({ songId, navigate }: Props) {
 
   if (!song) return null
 
+  const inputCls =
+    'w-full px-3 py-2.5 border border-border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-coral'
+  const labelCls = 'block text-xs font-semibold text-ink mb-1.5'
+
   return (
-    <div className="min-h-screen bg-canvas p-5 pb-10 max-w-2xl mx-auto">
-      <h1 className="text-2xl font-bold mb-6">Edit Song</h1>
-
-      <div className="mb-5">
-        <label className="block text-xs font-semibold uppercase text-muted mb-2 tracking-wide">
-          Title <span className="text-red-400">*</span>
-        </label>
-        <input
-          type="text"
-          className="w-full px-3 py-3 bg-white border border-lavender-light rounded-lg text-sm focus:outline-none focus:border-lavender"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-        />
+    <div className="max-w-2xl mx-auto px-4 sm:px-6 py-6 pb-12">
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          className="p-1.5 text-muted hover:text-ink rounded-lg hover:bg-coral-soft transition-colors"
+          onClick={goBack}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="19" y1="12" x2="5" y2="12" />
+            <polyline points="12 19 5 12 12 5" />
+          </svg>
+        </button>
+        <h1 className="text-xl font-bold text-ink">Edit Song</h1>
       </div>
 
-      <div className="mb-5">
-        <label className="block text-xs font-semibold uppercase text-muted mb-2 tracking-wide">
-          Artist / Anime
-        </label>
-        <input
-          type="text"
-          className="w-full px-3 py-3 bg-white border border-lavender-light rounded-lg text-sm focus:outline-none focus:border-lavender"
-          value={artist}
-          onChange={(e) => setArtist(e.target.value)}
-        />
+      <div className="mb-4">
+        <label className={labelCls}>Title <span className="text-red-400">*</span></label>
+        <input type="text" className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} />
       </div>
 
-      <div className="mb-5">
-        <label className="block text-xs font-semibold uppercase text-muted mb-2 tracking-wide">
-          Cover Art URL
-        </label>
+      <div className="mb-4">
+        <label className={labelCls}>Artist / Anime</label>
+        <input type="text" className={inputCls} value={artist} onChange={(e) => setArtist(e.target.value)} />
+      </div>
+
+      <div className="mb-4">
+        <label className={labelCls}>Cover Art URL</label>
         {coverArt && (
           <img
             src={coverArt}
             alt=""
-            className="w-20 h-20 rounded-lg object-cover mb-2"
+            className="w-16 h-16 rounded-xl object-cover mb-2"
             onError={(e) => { e.currentTarget.style.display = 'none' }}
           />
         )}
-        <input
-          type="url"
-          className="w-full px-3 py-3 bg-white border border-lavender-light rounded-lg text-sm focus:outline-none focus:border-lavender"
-          value={coverArt}
-          onChange={(e) => setCoverArt(e.target.value)}
-        />
+        <input type="url" className={inputCls} value={coverArt} onChange={(e) => setCoverArt(e.target.value)} />
       </div>
 
-      <div className="mb-5">
-        <label className="block text-xs font-semibold uppercase text-muted mb-2 tracking-wide">
-          Spotify Link
-        </label>
-        <input
-          type="url"
-          className="w-full px-3 py-3 bg-white border border-lavender-light rounded-lg text-sm focus:outline-none focus:border-lavender"
-          value={spotifyLink}
-          onChange={(e) => setSpotifyLink(e.target.value)}
-        />
+      <div className="mb-4">
+        <label className={labelCls}>Spotify Link</label>
+        <input type="url" className={inputCls} value={spotifyLink} onChange={(e) => setSpotifyLink(e.target.value)} />
       </div>
 
-      <div className="mb-5">
-        <label className="block text-xs font-semibold uppercase text-muted mb-2 tracking-wide">
-          YouTube Link <span className="text-red-400">*</span>
-        </label>
-        <input
-          type="url"
-          className="w-full px-3 py-3 bg-white border border-lavender-light rounded-lg text-sm focus:outline-none focus:border-lavender"
-          value={youtubeLink}
-          onChange={(e) => setYoutubeLink(e.target.value)}
-        />
+      <div className="mb-4">
+        <label className={labelCls}>YouTube Link <span className="text-red-400">*</span></label>
+        <input type="url" className={inputCls} value={youtubeLink} onChange={(e) => setYoutubeLink(e.target.value)} />
       </div>
 
       <div className="mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <label className="text-xs font-semibold uppercase text-muted tracking-wide">Lyrics</label>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className={labelCls.replace('mb-1.5', '')}>Lyrics</label>
           <button
-            className="text-xs px-2 py-1 bg-lavender-light rounded-lg font-semibold disabled:opacity-40"
+            className="text-xs px-2.5 py-1 border border-border rounded-lg font-semibold hover:bg-coral-soft transition-colors disabled:opacity-40"
             onClick={handleFetchLyrics}
-            disabled={fetchStatus === 'loading'}
+            disabled={fetchStatus === 'loading' || lyricsTab !== 'original'}
           >
             {fetchStatus === 'loading' ? 'Searching…' : 'Fetch from LRCLIB'}
           </button>
         </div>
 
-        {fetchStatus === 'notfound' && (
+        <div className="flex gap-1 mb-3 bg-coral-soft rounded-xl p-1 w-fit">
+          {(['original', 'romaji', 'translation'] as const).map((tab) => (
+            <button
+              key={tab}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-colors ${
+                lyricsTab === tab ? 'bg-coral text-white' : 'text-muted hover:text-ink'
+              }`}
+              onClick={() => setLyricsTab(tab)}
+            >
+              {tab === 'original' ? 'Original' : tab === 'romaji' ? 'Romaji' : 'Translation'}
+            </button>
+          ))}
+        </div>
+
+        {fetchStatus === 'notfound' && lyricsTab === 'original' && (
           <p className="text-xs text-muted mb-2">No lyrics found for this song.</p>
         )}
-        {fetchStatus === 'confirm' && pendingResult && (
-          <div className="bg-lavender-soft rounded-lg p-3 mb-2 text-xs">
-            <p className="font-semibold mb-1">
-              {pendingResult.timings ? 'Synced lyrics found — will also import timing data.' : 'Plain lyrics found (no timing data).'}
+        {fetchStatus === 'confirm' && pendingResult && lyricsTab === 'original' && (
+          <div className="bg-coral-soft rounded-xl p-3 mb-3 text-xs">
+            <p className="font-semibold text-ink mb-1">
+              {pendingResult.timings
+                ? 'Synced lyrics found — will also import timing data.'
+                : 'Plain lyrics found (no timing data).'}
             </p>
             <p className="text-muted mb-2">Replace your current lyrics?</p>
             <div className="flex gap-2">
               <button
-                className="px-3 py-1 bg-lavender rounded font-semibold"
+                className="px-3 py-1 bg-coral text-white rounded-lg font-semibold"
                 onClick={() => applyResult(pendingResult)}
               >
                 Yes, replace
               </button>
               <button
-                className="px-3 py-1 bg-white rounded font-semibold"
+                className="px-3 py-1 border border-border rounded-lg font-semibold"
                 onClick={() => { setFetchStatus('idle'); setPendingResult(null) }}
               >
                 Cancel
@@ -197,50 +204,65 @@ export default function EditScreen({ songId, navigate }: Props) {
         )}
 
         <textarea
-          className="w-full px-3 py-3 bg-white border border-lavender-light rounded-lg text-sm focus:outline-none focus:border-lavender resize-y min-h-40 font-mono"
-          value={lyricsText}
-          onChange={(e) => { setLyricsText(e.target.value); setFetchStatus('idle') }}
+          className="w-full px-3 py-3 border border-border rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-coral resize-y min-h-40 font-mono"
+          placeholder={
+            lyricsTab === 'original'
+              ? 'Paste lyrics here, one line per lyric line…'
+              : lyricsTab === 'romaji'
+              ? 'Paste romanized lyrics here…'
+              : 'Paste translated lyrics here…'
+          }
+          value={
+            lyricsTab === 'romaji' ? lyricsRomajiText
+            : lyricsTab === 'translation' ? lyricsTranslationText
+            : lyricsText
+          }
+          onChange={(e) => {
+            if (lyricsTab === 'romaji') setLyricsRomajiText(e.target.value)
+            else if (lyricsTab === 'translation') setLyricsTranslationText(e.target.value)
+            else { setLyricsText(e.target.value); setFetchStatus('idle') }
+          }}
         />
       </div>
 
       {error && <p className="text-sm text-red-500 mb-4">{error}</p>}
 
       <button
-        className="w-full bg-lavender-light text-ink font-semibold py-3.5 rounded-lg mb-3"
+        className="w-full border border-border text-ink font-semibold py-3 rounded-xl mb-3 hover:bg-coral-soft transition-colors"
         onClick={() => navigate({ name: 'timing', songId })}
       >
-        🎵 Edit Timings
+        Edit Timings
       </button>
 
       <button
-        className="w-full bg-lavender text-ink font-semibold py-3.5 rounded-lg mb-3 active:bg-lavender-dark"
+        className="w-full bg-coral text-white font-semibold py-3 rounded-xl mb-6 hover:bg-coral-dark transition-colors"
         onClick={handleSave}
       >
         Save Changes
       </button>
 
       {/* Danger zone */}
-      <div className="bg-red-50 border border-red-100 p-5 rounded-xl mt-6">
+      <div className="border border-red-200 rounded-2xl p-5">
         <p className="text-xs font-bold text-red-600 uppercase tracking-wide mb-3">Danger Zone</p>
         {!confirmDelete ? (
           <button
-            className="w-full bg-red-500 text-white font-semibold py-3 rounded-lg"
+            className="w-full bg-red-500 text-white font-semibold py-3 rounded-xl"
             onClick={() => setConfirmDelete(true)}
           >
-            🗑 Delete Song
+            Delete Song
           </button>
         ) : (
           <div>
-            <p className="text-sm text-red-700 mb-3">Are you sure? This cannot be undone.</p>
+            <p className="text-sm text-red-700 mb-3">This cannot be undone. Are you sure?</p>
             <div className="flex gap-3">
               <button
-                className="flex-1 bg-red-500 text-white font-semibold py-3 rounded-lg"
+                className="flex-1 bg-red-500 text-white font-semibold py-3 rounded-xl"
                 onClick={handleDelete}
               >
                 Yes, delete
               </button>
               <button
-                className="flex-1 bg-gray-200 text-ink font-semibold py-3 rounded-lg"
+                className="flex-1 border border-border text-ink font-semibold py-3 rounded-xl"
                 onClick={() => setConfirmDelete(false)}
               >
                 Cancel
@@ -249,13 +271,6 @@ export default function EditScreen({ songId, navigate }: Props) {
           </div>
         )}
       </div>
-
-      <button
-        className="w-full bg-lavender-light text-ink font-semibold py-3.5 rounded-lg mt-4"
-        onClick={() => navigate({ name: 'playback', songId: song.id })}
-      >
-        ← Cancel
-      </button>
     </div>
   )
 }

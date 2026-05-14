@@ -4,13 +4,14 @@ export default {
   theme: {
     extend: {
       colors: {
-        canvas: '#faf8fc',
-        lavender: '#c8b6db',
-        'lavender-dark': '#9b7fbf',
-        'lavender-light': '#e8daf5',
-        'lavender-soft': '#f0e6fd',
-        ink: '#333',
-        muted: '#999',
+        canvas: '#ffffff',
+        coral: '#E8694A',
+        'coral-dark': '#C95233',
+        'coral-light': '#FDEEE9',
+        'coral-soft': '#FDF5F3',
+        ink: '#1A1A1A',
+        muted: '#6B7280',
+        border: '#E5E7EB',
       },
       fontFamily: {
         sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],

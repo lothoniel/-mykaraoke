@@ -5,6 +5,7 @@ interface YTPlayer {
   getDuration(): number
   getPlayerState(): number
   seekTo(seconds: number, allowSeekAhead: boolean): void
+  pauseVideo(): void
   destroy(): void
 }
 
@@ -14,6 +15,7 @@ interface YTPlayerOptions {
   events?: {
     onReady?: (e: { target: YTPlayer }) => void
     onStateChange?: (e: { data: number }) => void
+    onError?: (e: { data: number }) => void
   }
 }
 
@@ -57,11 +59,13 @@ export function useYouTube(containerId: string, videoId: string | null) {
   const playerRef = useRef<YTPlayer | null>(null)
   const [playerState, setPlayerState] = useState<YTPlayerState>('idle')
   const [ready, setReady] = useState(false)
+  const [playerError, setPlayerError] = useState<number | null>(null)
 
   useEffect(() => {
     if (!videoId) return
 
     let destroyed = false
+    setPlayerError(null)
 
     loadYouTubeAPI().then(() => {
       if (destroyed) return
@@ -71,7 +75,7 @@ export function useYouTube(containerId: string, videoId: string | null) {
 
       playerRef.current = new window.YT.Player(el, {
         videoId,
-        playerVars: { rel: 0, modestbranding: 1 },
+        playerVars: { rel: 0, modestbranding: 1, origin: window.location.origin },
         events: {
           onReady: () => {
             if (!destroyed) setReady(true)
@@ -83,6 +87,9 @@ export function useYouTube(containerId: string, videoId: string | null) {
             else if (e.data === s.PAUSED) setPlayerState('paused')
             else if (e.data === s.ENDED) setPlayerState('ended')
           },
+          onError: (e) => {
+            if (!destroyed) setPlayerError(e.data)
+          },
         },
       })
     })
@@ -93,6 +100,7 @@ export function useYouTube(containerId: string, videoId: string | null) {
       playerRef.current = null
       setReady(false)
       setPlayerState('idle')
+      setPlayerError(null)
     }
   }, [containerId, videoId])
 
@@ -108,5 +116,9 @@ export function useYouTube(containerId: string, videoId: string | null) {
     playerRef.current?.seekTo(Math.max(0, seconds), true)
   }
 
-  return { ready, playerState, getCurrentTime, getDuration, seekTo }
+  function pause(): void {
+    playerRef.current?.pauseVideo()
+  }
+
+  return { ready, playerState, playerError, getCurrentTime, getDuration, seekTo, pause }
 }
