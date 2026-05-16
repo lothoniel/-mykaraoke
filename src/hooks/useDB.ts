@@ -23,11 +23,13 @@ export async function updateTimings(
   timings: Timing[],
   version: 'original' | 'romaji' | 'translation' = 'original'
 ): Promise<void> {
-  const field =
-    version === 'romaji' ? 'timingsRomaji'
-    : version === 'translation' ? 'timingsTranslation'
-    : 'timings'
-  await db.songs.update(id, { [field]: timings })
+  if (version === 'romaji') {
+    await db.songs.update(id, { timingsRomaji: timings })
+  } else if (version === 'translation') {
+    await db.songs.update(id, { timingsTranslation: timings })
+  } else {
+    await db.songs.update(id, { timings })
+  }
 }
 
 export async function deleteSong(id: string): Promise<void> {

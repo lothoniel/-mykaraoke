@@ -1,406 +1,374 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import * as db from '../../hooks/useDB'
-import { generateId } from '../../lib/id'
-import { getLikedSongs, getPlaylistTracks, getStoredOAuthToken, getUserPlaylists, RELINK_REQUIRED } from '../../lib/spotify'
-import type { Screen, Song, SpotifyPlaylistSummary, SpotifyTrackSummary } from '../../types'
+import type { Screen, Song } from '../../types'
 
 type Props = { navigate: (s: Screen) => void }
-type Sort = 'recent' | 'name' | 'favorites'
-type Tab = 'local' | 'spotify'
-type SpotifySubTab = 'liked' | 'playlists'
+type Tab = 'all' | 'fav' | 'spotify'
+type SortKey = 'title' | 'artist' | 'show' | 'recent'
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'all', label: 'All Songs' },
+  { id: 'fav', label: 'Favorites' },
+  { id: 'spotify', label: 'Spotify' },
+]
+
+const SORTS: { id: SortKey; label: string }[] = [
+  { id: 'title', label: 'Title' },
+  { id: 'artist', label: 'Artist' },
+  { id: 'show', label: 'Show' },
+  { id: 'recent', label: 'Recently Added' },
+]
+
+const strokeAttrs = {
+  strokeWidth: 1.8,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+}
+
+function PlayIcon({ size = 11, color = 'currentColor' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+      <polygon points="6 4 20 12 6 20 6 4" />
+    </svg>
+  )
+}
+
+function HeartIcon({ size = 13, filled = false }: { size?: number; filled?: boolean }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...strokeAttrs} fill={filled ? 'currentColor' : 'none'} stroke="currentColor">
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+    </svg>
+  )
+}
+
+function PlusIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...strokeAttrs} fill="none" stroke="currentColor">
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  )
+}
+
+function SortIcon({ size = 16, descending }: { size?: number; descending: boolean }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...strokeAttrs} fill="none" stroke="currentColor">
+      <line x1="3" y1="6" x2="14" y2="6" />
+      <line x1="3" y1="12" x2="11" y2="12" />
+      <line x1="3" y1="18" x2="8" y2="18" />
+      <polyline points={descending ? '17 9 17 21 21 17' : '17 15 17 3 21 7'} />
+      <line x1="17" y1={descending ? '21' : '3'} x2="17" y2={descending ? '21' : '3'} />
+    </svg>
+  )
+}
+
+function SpotifyIcon({ size = 13, color = 'currentColor' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} {...strokeAttrs}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M8 11.5c2.5-1 5.5-1 8 0M7 15c3-1.5 7-1.5 10 0M9 8.5c2-0.5 5-0.5 7 0" />
+    </svg>
+  )
+}
+
+function fmtDuration(ms?: number): string {
+  if (!ms || ms <= 0) return ''
+  const total = Math.round(ms / 1000)
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+function totalMinutes(songs: Song[]): number {
+  const ms = songs.reduce((acc, s) => acc + (s.duration ?? 0), 0)
+  return Math.round(ms / 60000)
+}
+
+function getShow(song: Song): string {
+  return song.genres?.[0] ?? 'Uncategorized'
+}
+
+function compareSongs(a: Song, b: Song, key: SortKey, asc: boolean): number {
+  let cmp = 0
+  if (key === 'title') cmp = a.title.localeCompare(b.title)
+  else if (key === 'artist') cmp = a.artist.localeCompare(b.artist)
+  else if (key === 'show') cmp = getShow(a).localeCompare(getShow(b))
+  else cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  return asc ? cmp : -cmp
+}
+
+function SongRow({
+  song,
+  index,
+  highlight,
+  onPlay,
+}: {
+  song: Song
+  index: number
+  highlight: boolean
+  onPlay: () => void
+}) {
+  const show = getShow(song)
+  return (
+    <button
+      onClick={onPlay}
+      className="w-full flex items-center gap-[11px] text-left transition-colors"
+      style={{
+        padding: '8px 10px',
+        borderRadius: 11,
+        background: highlight ? 'rgba(200, 241, 53, 0.18)' : 'transparent',
+        border: `1px solid ${highlight ? 'rgba(200, 241, 53, 0.33)' : 'transparent'}`,
+      }}
+      onMouseEnter={(e) => {
+        if (!highlight) e.currentTarget.style.background = 'rgba(200, 241, 53, 0.04)'
+      }}
+      onMouseLeave={(e) => {
+        if (!highlight) e.currentTarget.style.background = 'transparent'
+      }}
+    >
+      <span className="text-[12px] text-text-2 flex-none text-center" style={{ width: 18 }}>
+        {index + 1}
+      </span>
+      <div
+        className="flex-none overflow-hidden"
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: 8,
+          background: 'linear-gradient(135deg, #C8F135 0%, #7C3AED 100%)',
+        }}
+      >
+        {song.coverArt ? <img src={song.coverArt} alt="" className="w-full h-full object-cover" /> : null}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-[13px] font-semibold text-text truncate">{song.title}</div>
+        <div className="text-[11px] text-text-2 truncate">
+          {song.artist} · {show}
+        </div>
+      </div>
+      {fmtDuration(song.duration) && (
+        <span className="text-[12px] text-text-2 flex-none">{fmtDuration(song.duration)}</span>
+      )}
+      {song.isFavorite && (
+        <span className="flex-none" style={{ color: 'var(--accent)' }}>
+          <HeartIcon size={13} filled />
+        </span>
+      )}
+      <div
+        className="flex-none flex items-center justify-center"
+        style={{
+          width: 30,
+          height: 30,
+          borderRadius: '50%',
+          background: highlight ? 'var(--accent)' : '#EBE4FF',
+        }}
+      >
+        <PlayIcon size={11} color={highlight ? '#1C0840' : '#7060A0'} />
+      </div>
+    </button>
+  )
+}
 
 export default function LibraryScreen({ navigate }: Props) {
   const [songs, setSongs] = useState<Song[]>([])
-  const [sort, setSort] = useState<Sort>('recent')
-  const [activeTab, setActiveTab] = useState<Tab>('local')
-  const spotifyConnected = !!getStoredOAuthToken()
-
-  // Spotify top-level
-  const [likedSongs, setLikedSongs] = useState<SpotifyTrackSummary[]>([])
-  const [playlists, setPlaylists] = useState<SpotifyPlaylistSummary[]>([])
-  const [spotifyLoading, setSpotifyLoading] = useState(false)
-  const [spotifyError, setSpotifyError] = useState<string | null>(null)
-  const [spotifyLoaded, setSpotifyLoaded] = useState(false)
-  const [spotifySubTab, setSpotifySubTab] = useState<SpotifySubTab>('liked')
-  const [spotifySearch, setSpotifySearch] = useState('')
-  const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
-
-  // Inline playlist view
-  const [selectedPlaylist, setSelectedPlaylist] = useState<SpotifyPlaylistSummary | null>(null)
-  const [playlistTracks, setPlaylistTracks] = useState<SpotifyTrackSummary[]>([])
-  const [playlistTracksLoading, setPlaylistTracksLoading] = useState(false)
-  const [playlistTracksError, setPlaylistTracksError] = useState<string | null>(null)
+  const [tab, setTab] = useState<Tab>('all')
+  const [sort, setSort] = useState<SortKey>('recent')
+  const [descending, setDescending] = useState(true)
 
   useEffect(() => {
     db.getAllSongs().then(setSongs)
   }, [])
 
-  useEffect(() => {
-    if (activeTab !== 'spotify' || spotifyLoaded) return
-    async function load() {
-      setSpotifyLoading(true)
-      setSpotifyError(null)
-      try {
-        const [liked, lists] = await Promise.all([getLikedSongs(), getUserPlaylists()])
-        setLikedSongs(liked)
-        setPlaylists(lists)
-        setSpotifyLoaded(true)
-      } catch (e: unknown) {
-        setSpotifyError(e instanceof Error ? e.message : 'Failed to load Spotify')
-      } finally {
-        setSpotifyLoading(false)
-      }
+  const totalMin = totalMinutes(songs)
+
+  const sorted = useMemo(() => {
+    return [...songs].sort((a, b) => compareSongs(a, b, sort, !descending))
+  }, [songs, sort, descending])
+
+  const filtered = useMemo(() => {
+    if (tab === 'fav') return sorted.filter((s) => s.isFavorite)
+    if (tab === 'spotify') return sorted.filter((s) => !!s.spotifyTrackId)
+    return sorted
+  }, [sorted, tab])
+
+  const groupedBySpotifyShow = useMemo(() => {
+    if (tab !== 'spotify') return null
+    const groups = new Map<string, Song[]>()
+    for (const s of filtered) {
+      const k = getShow(s)
+      const arr = groups.get(k) ?? []
+      arr.push(s)
+      groups.set(k, arr)
     }
-    load()
-  }, [activeTab, spotifyLoaded])
-
-  async function handleOpenPlaylist(playlist: SpotifyPlaylistSummary) {
-    setSelectedPlaylist(playlist)
-    setPlaylistTracks([])
-    setPlaylistTracksError(null)
-    setPlaylistTracksLoading(true)
-    setSpotifySearch('')
-    try {
-      const tracks = await getPlaylistTracks(playlist.id)
-      setPlaylistTracks(tracks)
-    } catch (e: unknown) {
-      setPlaylistTracksError(e instanceof Error ? e.message : 'Failed to load tracks')
-    } finally {
-      setPlaylistTracksLoading(false)
-    }
-  }
-
-  function handleBackFromPlaylist() {
-    setSelectedPlaylist(null)
-    setPlaylistTracks([])
-    setPlaylistTracksError(null)
-    setSpotifySearch('')
-  }
-
-  async function handleAddTrack(track: SpotifyTrackSummary) {
-    await db.addSong({
-      id: generateId(),
-      title: track.title,
-      artist: track.artist,
-      coverArt: track.coverArt,
-      duration: track.duration,
-      releaseDate: track.releaseDate,
-      popularity: track.popularity,
-      spotifyTrackId: track.id,
-      youtubeLink: undefined,
-      lyrics: [],
-      timings: [],
-      isFavorite: false,
-      createdAt: new Date(),
-    })
-    setAddedIds((prev) => new Set(prev).add(track.id))
-    db.getAllSongs().then(setSongs)
-  }
-
-  function switchSpotifySubTab(tab: SpotifySubTab) {
-    setSpotifySubTab(tab)
-    setSpotifySearch('')
-    setSelectedPlaylist(null)
-    setPlaylistTracks([])
-  }
-
-  const sorted = [...songs].sort((a, b) => {
-    if (sort === 'name') return a.title.localeCompare(b.title)
-    if (sort === 'favorites') {
-      if (a.isFavorite === b.isFavorite) return 0
-      return a.isFavorite ? -1 : 1
-    }
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  })
-
-  const sortOptions: { label: string; value: Sort }[] = [
-    { label: 'Recently Added', value: 'recent' },
-    { label: 'A–Z', value: 'name' },
-    { label: 'Favorites', value: 'favorites' },
-  ]
-
-  const localSongIds = new Set(songs.map((s) => s.spotifyTrackId).filter(Boolean) as string[])
-  const q = spotifySearch.toLowerCase()
-  const filteredLiked = likedSongs.filter(
-    (t) => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q)
-  )
-  const filteredPlaylists = playlists.filter((p) => p.name.toLowerCase().includes(q))
-  const filteredPlaylistTracks = playlistTracks.filter(
-    (t) => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q)
-  )
-
-  function TrackRow({ track }: { track: SpotifyTrackSummary }) {
-    const alreadyInLibrary = localSongIds.has(track.id)
-    const justAdded = addedIds.has(track.id)
-    return (
-      <div className="flex items-center gap-3 py-2.5">
-        {track.coverArt ? (
-          <img src={track.coverArt} alt="" className="w-10 h-10 rounded-xl object-cover flex-shrink-0" />
-        ) : (
-          <div className="w-10 h-10 bg-coral-light rounded-xl flex-shrink-0 flex items-center justify-center text-base">🎵</div>
-        )}
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-ink truncate">{track.title}</div>
-          <div className="text-xs text-muted truncate">{track.artist}</div>
-        </div>
-        {alreadyInLibrary || justAdded ? (
-          <span className="text-xs text-muted flex-shrink-0">In library</span>
-        ) : (
-          <button
-            className="flex-shrink-0 w-7 h-7 rounded-full bg-coral text-white flex items-center justify-center hover:bg-coral-dark transition-colors"
-            onClick={() => handleAddTrack(track)}
-            aria-label={`Add ${track.title}`}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-          </button>
-        )}
-      </div>
-    )
-  }
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))
+  }, [filtered, tab])
 
   return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-6 py-6 pb-12">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold text-ink">Your Library</h1>
-        {activeTab === 'local' && <span className="text-sm text-muted">{songs.length} songs</span>}
-      </div>
-
-      {/* Top-level tabs */}
-      {spotifyConnected && (
-        <div className="flex bg-coral-soft rounded-xl p-1 mb-5">
+    <div className="flex flex-col h-full bg-bg overflow-hidden">
+      {/* Top bar */}
+      <div className="flex items-center justify-between px-6 py-4 flex-none">
+        <div className="min-w-0">
+          <div className="text-[22px] font-extrabold text-text leading-tight" style={{ letterSpacing: '-0.4px' }}>
+            Your Library
+          </div>
+          <div className="text-[13px] text-text-2 mt-0.5 truncate">
+            {songs.length} song{songs.length === 1 ? '' : 's'}
+            {totalMin > 0 ? ` · ${totalMin} min` : ''}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-none">
           <button
-            className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${
-              activeTab === 'local' ? 'bg-white text-ink shadow-sm' : 'text-muted'
-            }`}
-            onClick={() => setActiveTab('local')}
+            onClick={() => setDescending((d) => !d)}
+            aria-label={descending ? 'Sort descending' : 'Sort ascending'}
+            className="flex items-center justify-center bg-surface border border-border text-text-2 hover:bg-white"
+            style={{ width: 36, height: 36, borderRadius: 9 }}
           >
-            My Songs
+            <SortIcon size={16} descending={descending} />
           </button>
           <button
-            className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
-              activeTab === 'spotify' ? 'bg-white text-ink shadow-sm' : 'text-muted'
-            }`}
-            onClick={() => setActiveTab('spotify')}
+            onClick={() => navigate({ name: 'add' })}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-[9px] text-[13px] font-bold"
+            style={{ background: 'var(--accent)', color: '#1C0840' }}
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M8 11.5c2.5-1 5.5-1 8 0M7 15c3-1.5 7-1.5 10 0M9 8.5c2-0.5 5-0.5 7 0" />
-            </svg>
-            Spotify
+            <PlusIcon size={14} />
+            Add Song
           </button>
         </div>
-      )}
+      </div>
 
-      {/* My Songs tab */}
-      {activeTab === 'local' && (
-        <>
-          {songs.length > 1 && (
-            <div className="flex gap-2 mb-5">
-              {sortOptions.map((o) => (
-                <button
-                  key={o.value}
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
-                    sort === o.value ? 'bg-coral text-white' : 'bg-coral-light text-ink hover:bg-coral-soft'
-                  }`}
-                  onClick={() => setSort(o.value)}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {songs.length === 0 ? (
-            <div className="text-center py-16 text-muted">
-              <div className="text-5xl mb-3">🎵</div>
-              <p className="text-base font-semibold text-ink mb-2">No songs yet</p>
-              <p className="text-sm mb-6">Start by adding your first song.</p>
+      <div className="flex-1 px-6 pb-6 flex flex-col gap-3 overflow-hidden">
+        {/* Segmented tabs */}
+        <div
+          className="flex flex-none"
+          style={{ background: '#EBE4FF', borderRadius: 12, padding: 4, gap: 0 }}
+        >
+          {TABS.map((tb) => {
+            const active = tab === tb.id
+            return (
               <button
-                className="bg-coral text-white font-semibold px-6 py-3 rounded-xl"
-                onClick={() => navigate({ name: 'add' })}
+                key={tb.id}
+                onClick={() => setTab(tb.id)}
+                className="flex-1 flex items-center justify-center gap-1.5 text-[13px]"
+                style={{
+                  padding: '7px',
+                  borderRadius: 9,
+                  background: active ? '#fff' : 'transparent',
+                  color: active ? '#1C0840' : '#7060A0',
+                  fontWeight: active ? 700 : 500,
+                  boxShadow: active ? '0 1px 4px rgba(0,0,0,0.09)' : 'none',
+                }}
               >
+                {tb.id === 'spotify' && (
+                  <SpotifyIcon size={13} color={active ? '#16A34A' : '#7060A0'} />
+                )}
+                {tb.label}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Sort bar */}
+        <div className="flex items-center gap-1.5 flex-none flex-wrap">
+          <span className="text-[12px] text-text-2">Sort by:</span>
+          {SORTS.map((s) => {
+            const active = sort === s.id
+            return (
+              <button
+                key={s.id}
+                onClick={() => setSort(s.id)}
+                className="text-[12px]"
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: 8,
+                  fontWeight: active ? 700 : 400,
+                  background: active ? 'rgba(200, 241, 53, 0.18)' : 'transparent',
+                  color: active ? 'var(--accent-strong)' : '#7060A0',
+                  border: active ? '1px solid rgba(200, 241, 53, 0.45)' : '1px solid transparent',
+                }}
+              >
+                {s.label}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* List */}
+        <div className="flex-1 overflow-y-auto flex flex-col gap-0.5">
+          {songs.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-center text-text-2 py-10">
+              <div className="text-4xl mb-3">🎵</div>
+              <p className="text-[15px] font-bold text-text mb-1">No songs yet</p>
+              <p className="text-[13px] mb-5">Start by adding your first song.</p>
+              <button
+                onClick={() => navigate({ name: 'add' })}
+                className="flex items-center gap-1.5 text-[13px] font-bold"
+                style={{
+                  padding: '9px 18px',
+                  borderRadius: 9,
+                  background: 'var(--accent)',
+                  color: '#1C0840',
+                }}
+              >
+                <PlusIcon size={14} />
                 Add a Song
               </button>
             </div>
-          ) : (
-            <div className="divide-y divide-border">
-              {sorted.map((s) => (
+          ) : tab === 'spotify' ? (
+            <>
+              {filtered.length === 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-center text-text-2 py-10">
+                  <SpotifyIcon size={32} color="#7060A0" />
+                  <p className="text-[15px] font-bold text-text mb-1 mt-3">No Spotify songs yet</p>
+                  <p className="text-[13px] mb-5">Import songs from your Spotify library to see them here.</p>
+                </div>
+              ) : (
+                groupedBySpotifyShow!.map(([show, items], gi) => (
+                  <div key={show}>
+                    <div
+                      className="text-[11px] font-bold uppercase text-text-2"
+                      style={{ letterSpacing: 1.2, padding: '8px 10px 4px' }}
+                    >
+                      {show}
+                    </div>
+                    {items.map((song, i) => (
+                      <SongRow
+                        key={song.id}
+                        song={song}
+                        index={i}
+                        highlight={gi === 0 && i === 0}
+                        onPlay={() => navigate({ name: 'playback', songId: song.id })}
+                      />
+                    ))}
+                  </div>
+                ))
+              )}
+              <div className="pt-3 flex justify-center">
                 <button
-                  key={s.id}
-                  className="w-full flex gap-3 py-3 text-left hover:bg-coral-soft rounded-xl px-2 -mx-2 transition-colors"
-                  onClick={() => navigate({ name: 'playback', songId: s.id })}
+                  onClick={() => navigate({ name: 'import' })}
+                  className="text-[13px] font-semibold underline"
+                  style={{ color: 'var(--accent-strong)', textUnderlineOffset: 3 }}
                 >
-                  <div className="w-12 h-12 bg-coral-light rounded-xl flex-shrink-0 overflow-hidden flex items-center justify-center text-xl">
-                    {s.coverArt ? (
-                      <img src={s.coverArt} alt={s.title} className="w-full h-full object-cover" />
-                    ) : '🎵'}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-sm text-ink truncate">{s.title}</div>
-                    <div className="text-xs text-muted truncate">{s.artist}</div>
-                    {s.genres?.[0] && (
-                      <span className="text-xs text-coral-dark capitalize">{s.genres[0]}</span>
-                    )}
-                  </div>
-                  {s.isFavorite && (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-coral self-center flex-shrink-0">
-                      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-                    </svg>
-                  )}
+                  Browse more from Spotify →
                 </button>
-              ))}
+              </div>
+            </>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-10 text-text-2 text-[13px]">
+              {tab === 'fav' ? 'No favorites yet — tap the heart on a song to add it here.' : 'No songs.'}
             </div>
-          )}
-        </>
-      )}
-
-      {/* Spotify tab */}
-      {activeTab === 'spotify' && (
-        <div>
-          {selectedPlaylist ? (
-            /* Inline playlist view */
-            <>
-              <button
-                className="flex items-center gap-2 text-sm text-muted hover:text-ink mb-4 transition-colors"
-                onClick={handleBackFromPlaylist}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
-                </svg>
-                <span className="font-semibold truncate">{selectedPlaylist.name}</span>
-              </button>
-
-              {/* Search within playlist */}
-              <div className="relative mb-4">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none">
-                  <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-                </svg>
-                <input
-                  type="text"
-                  placeholder="Search in playlist…"
-                  value={spotifySearch}
-                  onChange={(e) => setSpotifySearch(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 text-sm bg-coral-soft rounded-xl border-0 outline-none focus:ring-2 focus:ring-coral text-ink placeholder:text-muted"
-                />
-              </div>
-
-              {playlistTracksLoading && <div className="text-center text-muted py-10 text-sm">Loading…</div>}
-              {playlistTracksError && (
-                <div className="text-center py-10">
-                  {playlistTracksError === RELINK_REQUIRED ? (
-                    <>
-                      <p className="text-sm text-ink mb-1 font-semibold">Spotify needs to be relinked</p>
-                      <p className="text-xs text-muted mb-4">Playlist access wasn't granted. Unlink and reconnect Spotify to fix this.</p>
-                      <button
-                        className="text-xs font-semibold text-white bg-coral px-4 py-2 rounded-xl"
-                        onClick={() => navigate({ name: 'settings' })}
-                      >
-                        Go to Settings
-                      </button>
-                    </>
-                  ) : (
-                    <p className="text-sm text-red-500">{playlistTracksError}</p>
-                  )}
-                </div>
-              )}
-              {!playlistTracksLoading && !playlistTracksError && (
-                <div className="divide-y divide-border">
-                  {filteredPlaylistTracks.length === 0 ? (
-                    <p className="text-center text-sm text-muted py-10">
-                      {spotifySearch ? 'No results.' : 'No tracks in this playlist.'}
-                    </p>
-                  ) : (
-                    filteredPlaylistTracks.map((track) => <TrackRow key={track.id} track={track} />)
-                  )}
-                </div>
-              )}
-            </>
           ) : (
-            /* Sub-tabs + search */
-            <>
-              <div className="flex bg-coral-soft rounded-xl p-1 mb-4">
-                <button
-                  className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                    spotifySubTab === 'liked' ? 'bg-white text-ink shadow-sm' : 'text-muted'
-                  }`}
-                  onClick={() => switchSpotifySubTab('liked')}
-                >
-                  Liked Songs
-                </button>
-                <button
-                  className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                    spotifySubTab === 'playlists' ? 'bg-white text-ink shadow-sm' : 'text-muted'
-                  }`}
-                  onClick={() => switchSpotifySubTab('playlists')}
-                >
-                  Playlists
-                </button>
-              </div>
-
-              <div className="relative mb-4">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none">
-                  <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-                </svg>
-                <input
-                  type="text"
-                  placeholder={spotifySubTab === 'liked' ? 'Search songs…' : 'Search playlists…'}
-                  value={spotifySearch}
-                  onChange={(e) => setSpotifySearch(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 text-sm bg-coral-soft rounded-xl border-0 outline-none focus:ring-2 focus:ring-coral text-ink placeholder:text-muted"
-                />
-              </div>
-
-              {spotifyLoading && <div className="text-center text-muted py-10 text-sm">Loading…</div>}
-              {spotifyError && <div className="text-center text-red-500 py-10 text-sm">{spotifyError}</div>}
-
-              {!spotifyLoading && !spotifyError && spotifySubTab === 'liked' && (
-                <div className="divide-y divide-border">
-                  {filteredLiked.length === 0 ? (
-                    <p className="text-center text-sm text-muted py-10">
-                      {spotifySearch ? 'No results.' : 'No liked songs found.'}
-                    </p>
-                  ) : (
-                    filteredLiked.map((track) => <TrackRow key={track.id} track={track} />)
-                  )}
-                </div>
-              )}
-
-              {!spotifyLoading && !spotifyError && spotifySubTab === 'playlists' && (
-                <div className="space-y-2">
-                  {filteredPlaylists.length === 0 ? (
-                    <p className="text-center text-sm text-muted py-10">
-                      {spotifySearch ? 'No results.' : 'No playlists found.'}
-                    </p>
-                  ) : (
-                    filteredPlaylists.map((p) => (
-                      <button
-                        key={p.id}
-                        className="w-full flex items-center gap-3 bg-coral-soft rounded-2xl p-3 text-left hover:shadow-sm transition-shadow"
-                        onClick={() => handleOpenPlaylist(p)}
-                      >
-                        {p.imageUrl ? (
-                          <img src={p.imageUrl} alt="" className="w-12 h-12 rounded-xl object-cover flex-shrink-0" />
-                        ) : (
-                          <div className="w-12 h-12 bg-coral-light rounded-xl flex-shrink-0 flex items-center justify-center text-xl">🎵</div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="font-semibold text-sm text-ink truncate">{p.name}</div>
-                          {p.trackCount > 0 && <div className="text-xs text-muted">{p.trackCount} songs</div>}
-                        </div>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted flex-shrink-0">
-                          <polyline points="9 18 15 12 9 6" />
-                        </svg>
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-            </>
+            filtered.map((song, i) => (
+              <SongRow
+                key={song.id}
+                song={song}
+                index={i}
+                highlight={i === 0}
+                onPlay={() => navigate({ name: 'playback', songId: song.id })}
+              />
+            ))
           )}
         </div>
-      )}
+      </div>
     </div>
   )
 }

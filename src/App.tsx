@@ -1,24 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Screen } from './types'
-import NavBar from './components/NavBar'
+import Sidebar from './components/Sidebar'
 import HomeScreen from './components/screens/HomeScreen'
 import LibraryScreen from './components/screens/LibraryScreen'
 import AddSongScreen from './components/screens/AddSongScreen'
 import TimingScreen from './components/screens/TimingScreen'
 import PlaybackScreen from './components/screens/PlaybackScreen'
-import DetailsScreen from './components/screens/DetailsScreen'
 import EditScreen from './components/screens/EditScreen'
 import SearchScreen from './components/screens/SearchScreen'
 import SettingsScreen from './components/screens/SettingsScreen'
 import ImportScreen from './components/screens/ImportScreen'
 import { exchangeCodeForToken } from './lib/spotify'
+import { applyAccent } from './lib/settings'
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' })
-  const [lastSongId, setLastSongId] = useState<string | undefined>()
   const historyRef = useRef<Screen[]>([])
 
   useEffect(() => {
+    applyAccent()
     const params = new URLSearchParams(window.location.search)
     const code = params.get('code')
     const state = params.get('state')
@@ -33,7 +33,6 @@ export default function App() {
   function navigate(s: Screen) {
     historyRef.current = [...historyRef.current.slice(-19), screen]
     setScreen(s)
-    if (s.name === 'playback') setLastSongId(s.songId)
     window.scrollTo(0, 0)
   }
 
@@ -43,7 +42,6 @@ export default function App() {
     historyRef.current = h.slice(0, -1)
     const dest = target ?? { name: 'home' as const }
     setScreen(dest)
-    if (dest.name === 'playback') setLastSongId((dest as { name: 'playback'; songId: string }).songId)
     window.scrollTo(0, 0)
   }
 
@@ -59,8 +57,6 @@ export default function App() {
         return <TimingScreen songId={screen.songId} version={screen.version} navigate={navigate} />
       case 'playback':
         return <PlaybackScreen songId={screen.songId} navigate={navigate} goBack={goBack} />
-      case 'details':
-        return <DetailsScreen songId={screen.songId} navigate={navigate} goBack={goBack} />
       case 'edit':
         return <EditScreen songId={screen.songId} navigate={navigate} goBack={goBack} />
       case 'search':
@@ -73,9 +69,9 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-canvas">
-      <NavBar navigate={navigate} currentScreen={screen} lastSongId={lastSongId} />
-      {renderScreen()}
+    <div className="h-screen flex flex-row bg-bg overflow-hidden">
+      <Sidebar navigate={navigate} currentScreen={screen} />
+      <main className="flex-1 overflow-auto pt-12 md:pt-0">{renderScreen()}</main>
     </div>
   )
 }

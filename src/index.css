@@ -2,16 +2,31 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --accent: #C8F135;
+  /* Darker shade for accent-colored text on light backgrounds.
+     The brand lime (#C8F135) fails contrast as foreground on #F5F1FF;
+     use --accent-strong for text links, status dots, etc. */
+  --accent-strong: #5A7A0F;
+}
+
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
-  background-color: #faf8fc;
-  color: #333;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background-color: #F5F1FF;
+  color: #1C0840;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* YouTube embed fills its container */

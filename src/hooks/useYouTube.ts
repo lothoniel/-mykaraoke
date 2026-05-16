@@ -5,6 +5,7 @@ interface YTPlayer {
   getDuration(): number
   getPlayerState(): number
   seekTo(seconds: number, allowSeekAhead: boolean): void
+  playVideo(): void
   pauseVideo(): void
   destroy(): void
 }
@@ -65,7 +66,9 @@ export function useYouTube(containerId: string, videoId: string | null) {
     if (!videoId) return
 
     let destroyed = false
-    setPlayerError(null)
+    // playerError reset is handled by the previous effect's cleanup (or by useState's
+    // null initial on first mount). Setting it synchronously in the effect body triggers
+    // react-hooks/set-state-in-effect.
 
     loadYouTubeAPI().then(() => {
       if (destroyed) return
@@ -120,5 +123,9 @@ export function useYouTube(containerId: string, videoId: string | null) {
     playerRef.current?.pauseVideo()
   }
 
-  return { ready, playerState, playerError, getCurrentTime, getDuration, seekTo, pause }
+  function play(): void {
+    playerRef.current?.playVideo()
+  }
+
+  return { ready, playerState, playerError, getCurrentTime, getDuration, seekTo, pause, play }
 }
