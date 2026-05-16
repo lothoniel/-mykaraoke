@@ -251,7 +251,9 @@ export default function ImportScreen({ navigate, goBack }: Props) {
                   <div className="flex-1 min-w-0">
                     <div className="text-[13px] font-semibold text-text truncate">{p.name}</div>
                     <div className="text-[11px] text-text-2 truncate">
-                      {p.trackCount} song{p.trackCount === 1 ? '' : 's'}
+                      {p.trackCount > 0
+                        ? `${p.trackCount} song${p.trackCount === 1 ? '' : 's'}`
+                        : 'Spotify playlist'}
                     </div>
                   </div>
                   <span className="text-text-2 flex-none">

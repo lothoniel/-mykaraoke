@@ -241,14 +241,22 @@ export async function getUserPlaylists(): Promise<SpotifyPlaylistSummary[]> {
   })
   if (!res.ok) throw new Error('Failed to fetch playlists')
   const data = await res.json() as {
-    items: Array<{ id: string; name: string; owner: { id: string }; tracks: { total: number }; images: Array<{ url: string }> }>
+    items: Array<{
+      id: string
+      name: string
+      owner: { id: string }
+      tracks?: { total?: number }
+      // Some accounts get the `tracks` paging object renamed to `items`.
+      items?: { total?: number }
+      images: Array<{ url: string }>
+    }>
   }
   return data.items
     .filter((p) => p.owner?.id !== 'spotify')
     .map((p) => ({
       id: p.id,
       name: p.name,
-      trackCount: p.tracks?.total ?? 0,
+      trackCount: p.tracks?.total ?? p.items?.total ?? 0,
       imageUrl: p.images?.[0]?.url,
     }))
 }
@@ -265,18 +273,36 @@ export async function getLikedSongs(): Promise<SpotifyTrackSummary[]> {
 
 export async function getPlaylistTracks(playlistId: string): Promise<SpotifyTrackSummary[]> {
   const token = await getOAuthAccessToken()
-  const res = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
+  // Use the playlist-details endpoint without `fields` — the latter triggers an
+  // empty response, and /playlists/{id}/tracks returns 403 for some accounts.
+  const res = await fetch(
+    `https://api.spotify.com/v1/playlists/${playlistId}?market=from_token`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  )
   if (res.status === 403) {
-    const token = getStoredOAuthToken()
-    const hasScope = token?.scope?.includes('playlist-read-private') ?? false
+    const stored = getStoredOAuthToken()
+    const hasScope = stored?.scope?.includes('playlist-read-private') ?? false
     if (!hasScope) throw new Error(RELINK_REQUIRED)
     throw new Error("This playlist can't be accessed — it may be private or restricted by Spotify.")
   }
   if (!res.ok) throw new Error(`Failed to fetch playlist tracks (${res.status})`)
-  const data = await res.json() as { items: Array<{ track: SpotifyRawTrack | null }> }
-  return (data.items ?? []).flatMap((i) => (i.track ? [rawTrackToSummary(i.track)] : []))
+  const raw = await res.json() as Record<string, unknown>
+  const tracksObj = raw.tracks as { items?: unknown } | undefined
+  const itemsObj = raw.items as { items?: unknown } | undefined
+  const entries = (Array.isArray(tracksObj?.items)
+    ? tracksObj.items
+    : Array.isArray(itemsObj?.items)
+      ? itemsObj.items
+      : []) as Array<Record<string, unknown>>
+  return entries.flatMap((entry) => {
+    // Per-track wrapper varies by account: `entry.track`, `entry.item`, or
+    // sometimes the track object itself sits at the entry level.
+    const candidate =
+      (entry.track as SpotifyRawTrack | null | undefined) ??
+      (entry.item as SpotifyRawTrack | null | undefined) ??
+      (typeof entry.id === 'string' ? (entry as unknown as SpotifyRawTrack) : null)
+    return candidate && candidate.id ? [rawTrackToSummary(candidate)] : []
+  })
 }
 
 export async function startPlayback(trackId: string): Promise<'ok' | 'no_device' | 'auth_error'> {
