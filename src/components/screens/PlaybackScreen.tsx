@@ -1,8 +1,8 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import * as db from '../../hooks/useDB'
+import { useSpotifyEmbed } from '../../hooks/useSpotifyEmbed'
 import { useYouTube } from '../../hooks/useYouTube'
 import { getLyricSettings } from '../../lib/settings'
-import { getPlaybackState, getStoredOAuthToken, startPlayback } from '../../lib/spotify'
 import { extractVideoId, formatSeconds } from '../../lib/youtube'
 import type { Screen, Song } from '../../types'
 
@@ -69,23 +69,6 @@ function SpotifyIcon({ size = 14, color = 'currentColor' }: { size?: number; col
     <svg width={size} height={size} viewBox="0 0 24 24" {...strokeAttrs} fill="none" stroke={color}>
       <circle cx="12" cy="12" r="10" />
       <path d="M8 11.5c2.5-1 5.5-1 8 0M7 15c3-1.5 7-1.5 10 0M9 8.5c2-0.5 5-0.5 7 0" />
-    </svg>
-  )
-}
-
-function PlayIcon({ size = 12, color = 'currentColor' }: { size?: number; color?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
-      <polygon points="5 3 19 12 5 21 5 3" />
-    </svg>
-  )
-}
-
-function PauseIcon({ size = 12, color = 'currentColor' }: { size?: number; color?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
-      <rect x="6" y="4" width="4" height="16" />
-      <rect x="14" y="4" width="4" height="16" />
     </svg>
   )
 }
@@ -184,23 +167,17 @@ function ProgressBar({
 export default function PlaybackScreen({ songId, version, navigate, goBack }: Props) {
   const uid = useId().replace(/:/g, '')
   const playerId = `yt-player-playback-${uid}`
+  const spotifyEmbedId = `spotify-embed-${uid}`
 
   const [song, setSong] = useState<Song | null>(null)
   const [allSongs, setAllSongs] = useState<Song[]>([])
   const [currentTime, setCurrentTime] = useState(0)
   const [isFavorite, setIsFavorite] = useState(false)
   const [playerMode, setPlayerMode] = useState<'youtube' | 'spotify'>('youtube')
-  const [spotifySyncError, setSpotifySyncError] = useState<'auth_error' | null>(null)
-  const [localSyncRunning, setLocalSyncRunning] = useState(false)
-  const [playbackError, setPlaybackError] = useState<string | null>(null)
-  const [isSyncing, setIsSyncing] = useState(false)
   const [lyricsTab, setLyricsTab] = useState<LyricsTab>(version ?? 'original')
   const [relatedTab, setRelatedTab] = useState<'artist' | 'foryou'>('artist')
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const localSyncRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const localSyncStartRef = useRef<{ startedAt: number; timeAtStart: number } | null>(null)
-  const suppressSpotifyPollRef = useRef(false)
 
   useEffect(() => {
     db.getSong(songId).then((s) => {
@@ -211,12 +188,14 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
       }
     })
     db.getAllSongs().then(setAllSongs)
-    return () => { if (localSyncRef.current) clearInterval(localSyncRef.current) }
   }, [songId])
 
   const youtubeVideoId = song ? extractVideoId(song.youtubeLink ?? '') ?? null : null
   const { playerState, playerError, getCurrentTime, getDuration, seekTo, pause: pauseYouTube } =
     useYouTube(playerId, youtubeVideoId)
+
+  const spotifyTrackId = playerMode === 'spotify' ? (song?.spotifyTrackId ?? null) : null
+  const spotifyEmbed = useSpotifyEmbed(spotifyEmbedId, spotifyTrackId)
 
   useEffect(() => {
     if (playerMode !== 'youtube') return
@@ -232,66 +211,11 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
     }
   }, [playerState, getCurrentTime, playerMode])
 
-  useEffect(() => {
-    if (playerMode !== 'spotify') return
-    intervalRef.current = setInterval(async () => {
-      const state = await getPlaybackState()
-      if (state === 'auth_error') {
-        setSpotifySyncError('auth_error')
-        if (intervalRef.current) clearInterval(intervalRef.current)
-        return
-      }
-      if (state?.is_playing && !suppressSpotifyPollRef.current) {
-        setCurrentTime(state.progress_ms / 1000)
-      }
-    }, 500)
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-    }
-  }, [playerMode])
-
-  function startLocalSync() {
-    suppressSpotifyPollRef.current = true
-    localSyncStartRef.current = { startedAt: Date.now(), timeAtStart: currentTime }
-    if (localSyncRef.current) clearInterval(localSyncRef.current)
-    localSyncRef.current = setInterval(() => {
-      const ref = localSyncStartRef.current
-      if (ref) setCurrentTime(ref.timeAtStart + (Date.now() - ref.startedAt) / 1000)
-    }, 100)
-    setLocalSyncRunning(true)
-  }
-
-  function pauseLocalSync() {
-    if (localSyncRef.current) clearInterval(localSyncRef.current)
-    localSyncRef.current = null
-    localSyncStartRef.current = null
-    suppressSpotifyPollRef.current = false
-    setLocalSyncRunning(false)
-  }
-
-  function resetLocalSync() {
-    pauseLocalSync()
-    setCurrentTime(0)
-  }
-
-  async function handlePlayAndSync() {
-    if (!song?.spotifyTrackId || isSyncing) return
-    setIsSyncing(true)
-    setPlaybackError(null)
-    const result = await startPlayback(song.spotifyTrackId)
-    setIsSyncing(false)
-    if (result === 'ok') startLocalSync()
-    else if (result === 'no_device')
-      setPlaybackError('No active Spotify device found. Open Spotify on any device first.')
-    else setPlaybackError('Permission missing. Reconnect Spotify in Settings.')
-  }
+  const displayTime = playerMode === 'youtube' ? currentTime : spotifyEmbed.position
 
   function handleSwitchMode(mode: 'youtube' | 'spotify') {
-    if (mode === 'spotify') {
-      pauseYouTube()
-      setSpotifySyncError(null)
-    }
-    if (mode === 'youtube') pauseLocalSync()
+    if (mode === 'spotify') pauseYouTube()
+    if (mode === 'youtube') spotifyEmbed.pause()
     setPlayerMode(mode)
     setCurrentTime(0)
   }
@@ -334,7 +258,7 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
         : song.timings
 
   const sortedTimings = [...activeTimings].sort((a, b) => a.timestamp - b.timestamp)
-  const currentLineIdx = findCurrentLineIndex(sortedTimings, currentTime)
+  const currentLineIdx = findCurrentLineIndex(sortedTimings, displayTime)
   const hasTimings = activeTimings.length > 0
 
   const romajiForCurrent =
@@ -342,18 +266,40 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
       ? (song.lyricsRomaji?.[currentLineIdx] ?? null)
       : null
 
-  if (!song) return null
+  if (!song) {
+    return (
+      <div className="flex flex-col h-full bg-bg overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 flex-none border-b border-border">
+          <button
+            onClick={goBack}
+            aria-label="Back"
+            className="text-text-2 hover:text-text"
+            style={{ padding: 2 }}
+          >
+            <BackIcon size={19} color="currentColor" />
+          </button>
+          <div className="text-[17px] font-extrabold text-text" style={{ letterSpacing: '-0.3px' }}>
+            Now Playing
+          </div>
+          <span style={{ width: 19 }} />
+        </div>
+        <div className="flex-1 flex items-center justify-center text-text-2 text-[13px]">
+          Loading…
+        </div>
+      </div>
+    )
+  }
 
   const show = song.genres?.[0]
   const hasYoutube = !!song.youtubeLink
   const hasSpotify = !!song.spotifyTrackId
   const showToggle = hasYoutube && hasSpotify
-  const hasOAuthToken = !!getStoredOAuthToken()
-  const hasControlScope = getStoredOAuthToken()?.scope?.includes('user-modify-playback-state') ?? false
 
-  // Duration: YouTube via player, Spotify via track metadata.
+  // Duration: YouTube via player, Spotify via embed (with cached metadata as fallback).
   const ytDuration = playerMode === 'youtube' ? getDuration() : 0
-  const spotifyDuration = song.duration ? song.duration / 1000 : 0
+  const spotifyDuration = spotifyEmbed.duration > 0
+    ? spotifyEmbed.duration
+    : song.duration ? song.duration / 1000 : 0
   const totalDuration = playerMode === 'youtube' ? ytDuration : spotifyDuration
 
   // Visible window: current line + 2 before, 3 after (centered).
@@ -458,13 +404,21 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
           {/* Video / embed area — YouTube container stays mounted, hidden in Spotify mode */}
           <div
             className="flex-none relative w-full"
-            style={{
-              aspectRatio: '16 / 9',
-              maxHeight: 210,
-              borderRadius: 12,
-              overflow: 'hidden',
-              background: '#06061A',
-            }}
+            style={
+              playerMode === 'youtube'
+                ? {
+                    aspectRatio: '16 / 9',
+                    maxHeight: 280,
+                    borderRadius: 12,
+                    overflow: 'hidden',
+                    background: '#06061A',
+                  }
+                : {
+                    height: 152,
+                    borderRadius: 12,
+                    overflow: 'hidden',
+                  }
+            }
           >
             <div
               className="absolute inset-0 yt-player"
@@ -497,27 +451,12 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
             {playerMode === 'spotify' && (
               <div className="absolute inset-0">
                 {hasSpotify ? (
-                  hasOAuthToken ? (
-                    <iframe
-                      src={`https://open.spotify.com/embed/track/${song.spotifyTrackId}?utm_source=generator`}
-                      allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                      loading="lazy"
-                      className="w-full h-full border-0"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-5 text-center bg-black/30">
-                      <p className="text-white text-[13px] font-semibold">Connect Spotify to use this player</p>
-                      <button
-                        className="text-[12px] underline"
-                        style={{ color: 'var(--accent)' }}
-                        onClick={() => navigate({ name: 'settings' })}
-                      >
-                        Go to Settings
-                      </button>
-                    </div>
-                  )
+                  <div id={spotifyEmbedId} className="w-full h-full" />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-[12px]" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                  <div
+                    className="w-full h-full flex items-center justify-center text-[12px]"
+                    style={{ color: '#7060A0', background: '#EBE4FF' }}
+                  >
                     No Spotify link
                   </div>
                 )}
@@ -525,115 +464,18 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
             )}
           </div>
 
-          {/* Progress bar (YouTube: seekable; Spotify: read-only) */}
+          {/* Progress bar — seekable in both modes */}
           <div className="flex-none">
             <ProgressBar
-              current={currentTime}
+              current={displayTime}
               duration={totalDuration}
-              onSeek={playerMode === 'youtube' ? (s) => { seekTo(s); setCurrentTime(s) } : undefined}
+              onSeek={
+                playerMode === 'youtube'
+                  ? (s) => { seekTo(s); setCurrentTime(s) }
+                  : (s) => { spotifyEmbed.seek(s) }
+              }
             />
           </div>
-
-          {/* Spotify Play & Sync controls */}
-          {playerMode === 'spotify' && hasSpotify && hasOAuthToken && (
-            <div className="flex-none flex flex-col gap-1.5">
-              {spotifySyncError === 'auth_error' ? (
-                <p className="text-[12px] text-text-2">
-                  Lyrics sync needs updated permissions.{' '}
-                  <button
-                    className="underline"
-                    style={{ color: 'var(--accent-strong)' }}
-                    onClick={() => navigate({ name: 'settings' })}
-                  >
-                    Reconnect Spotify
-                  </button>
-                </p>
-              ) : hasControlScope ? (
-                <div className="flex items-center gap-2">
-                  {!localSyncRunning ? (
-                    <button
-                      onClick={handlePlayAndSync}
-                      disabled={isSyncing}
-                      className="flex items-center gap-1.5 text-[12px] font-bold disabled:opacity-60"
-                      style={{
-                        padding: '7px 14px',
-                        borderRadius: 9,
-                        background: 'var(--accent)',
-                        color: '#1C0840',
-                      }}
-                    >
-                      {isSyncing ? 'Starting…' : (
-                        <>
-                          <PlayIcon size={11} color="#1C0840" />
-                          Play &amp; Sync
-                        </>
-                      )}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={pauseLocalSync}
-                      className="flex items-center gap-1.5 text-[12px] font-bold"
-                      style={{
-                        padding: '7px 14px',
-                        borderRadius: 9,
-                        background: 'var(--accent)',
-                        color: '#1C0840',
-                      }}
-                    >
-                      <PauseIcon size={11} color="#1C0840" />
-                      Pause lyrics
-                    </button>
-                  )}
-                  {currentTime > 0 && (
-                    <button
-                      onClick={resetLocalSync}
-                      className="text-[12px] text-text-2 hover:text-text underline"
-                    >
-                      Reset
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <>
-                  <p className="text-[12px] text-text-2">
-                    <button
-                      className="underline"
-                      style={{ color: 'var(--accent-strong)' }}
-                      onClick={() => navigate({ name: 'settings' })}
-                    >
-                      Reconnect Spotify
-                    </button>{' '}
-                    to enable one-tap Play &amp; Sync.
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={localSyncRunning ? pauseLocalSync : startLocalSync}
-                      className="flex items-center gap-1.5 text-[12px] font-semibold"
-                      style={{
-                        padding: '6px 12px',
-                        borderRadius: 9,
-                        background: localSyncRunning ? 'var(--accent)' : '#FFFFFF',
-                        color: '#1C0840',
-                        border: localSyncRunning ? 'none' : '1px solid rgba(100, 60, 180, 0.09)',
-                      }}
-                    >
-                      {localSyncRunning ? <PauseIcon size={11} color="#1C0840" /> : <PlayIcon size={11} color="#1C0840" />}
-                      {localSyncRunning ? 'Pause lyrics' : 'Start lyrics'}
-                    </button>
-                    {currentTime > 0 && (
-                      <button
-                        onClick={resetLocalSync}
-                        className="text-[12px] text-text-2 hover:text-text underline"
-                      >
-                        Reset
-                      </button>
-                    )}
-                  </div>
-                </>
-              )}
-              {playbackError && <p className="text-[12px] text-danger">{playbackError}</p>}
-            </div>
-          )}
 
           {/* Related songs (tabbed) */}
           {(() => {
@@ -776,7 +618,7 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
                           fontWeight: active ? 700 : 500,
                         }}
                       >
-                        {tab === 'original' ? 'Orig' : tab === 'romaji' ? 'Romaji' : 'Trans'}
+                        {tab === 'original' ? 'Orig' : tab === 'romaji' ? 'Roman' : 'Trans'}
                       </button>
                     )
                   })}

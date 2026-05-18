@@ -424,6 +424,7 @@ export default function SearchScreen({ navigate }: Props) {
         releaseDate: track.releaseDate,
         popularity: track.popularity,
         spotifyTrackId: track.id,
+        spotifyLink: `https://open.spotify.com/track/${track.id}`,
         youtubeLink: undefined,
         lyrics: lrcLyrics,
         timings: lrcTimings,
