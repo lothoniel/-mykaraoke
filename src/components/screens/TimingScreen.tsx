@@ -52,6 +52,15 @@ function AlertIcon({ size = 24, color = 'currentColor' }: { size?: number; color
   )
 }
 
+function TrashIcon({ size = 14, color = 'currentColor' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...strokeAttrs} fill="none" stroke={color}>
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    </svg>
+  )
+}
+
 export default function TimingScreen({ songId, navigate, version }: Props) {
   const activeVersion = version ?? 'original'
   const uid = useId().replace(/:/g, '')
@@ -60,13 +69,19 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
   const [song, setSong] = useState<Song | null>(null)
   const [timings, setTimings] = useState<Timing[]>([])
   const [confirmReset, setConfirmReset] = useState(false)
+  const [confirmDeleteIdx, setConfirmDeleteIdx] = useState<number | null>(null)
   const [selectedLine, setSelectedLine] = useState<number | null>(null)
   const [editingLine, setEditingLine] = useState<number | null>(null)
   const [editingText, setEditingText] = useState('')
   const [currentTime, setCurrentTime] = useState(0)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedForDelete, setSelectedForDelete] = useState<Set<number>>(new Set())
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
+  const [pressedAdjust, setPressedAdjust] = useState<{ line: number; delta: number } | null>(null)
 
   const currentRowRef = useRef<HTMLDivElement | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pressedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const videoId = song ? (extractVideoId(song.youtubeLink ?? '') ?? null) : null
   const { ready, playerState, playerError, getCurrentTime, seekTo, play } = useYouTube(playerId, videoId)
@@ -116,10 +131,8 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
   }
 
   useEffect(() => {
-    if (playerState !== 'playing') {
-      currentRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }
-  }, [nextToMark, playerState])
+    currentRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [nextToMark])
 
   function updateTimings(next: Timing[]) {
     setTimings(next)
@@ -133,7 +146,14 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
         : t,
     )
     updateTimings(next)
+    setPressedAdjust({ line: lineIndex, delta })
+    if (pressedTimerRef.current) clearTimeout(pressedTimerRef.current)
+    pressedTimerRef.current = setTimeout(() => setPressedAdjust(null), 350)
   }
+
+  useEffect(() => () => {
+    if (pressedTimerRef.current) clearTimeout(pressedTimerRef.current)
+  }, [])
 
   function handleRemark(lineIndex: number) {
     const ts = getCurrentTime()
@@ -187,6 +207,73 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
     setConfirmReset(false)
   }
 
+  function toggleSelectMode() {
+    if (selectMode) {
+      setSelectedForDelete(new Set())
+      setConfirmBulkDelete(false)
+    } else {
+      setSelectedLine(null)
+      setConfirmDeleteIdx(null)
+    }
+    setSelectMode((v) => !v)
+  }
+
+  function toggleSelectedForDelete(index: number) {
+    setSelectedForDelete((prev) => {
+      const next = new Set(prev)
+      if (next.has(index)) next.delete(index)
+      else next.add(index)
+      return next
+    })
+  }
+
+  async function handleDeleteMultiple() {
+    if (!song || selectedForDelete.size === 0) return
+    const toDelete = selectedForDelete
+    const newLyrics = activeLyrics.filter((_, i) => !toDelete.has(i))
+    const sortedDel = [...toDelete].sort((a, b) => a - b)
+    const shiftFor = (idx: number) => sortedDel.filter((d) => d < idx).length
+    const newTimings: Timing[] = timings
+      .filter((t) => !toDelete.has(t.lineIndex))
+      .map((t) => ({ ...t, lineIndex: t.lineIndex - shiftFor(t.lineIndex) }))
+    const lyricsField =
+      activeVersion === 'romaji' ? 'lyricsRomaji'
+      : activeVersion === 'translation' ? 'lyricsTranslation'
+      : 'lyrics'
+    const timingsField =
+      activeVersion === 'romaji' ? 'timingsRomaji'
+      : activeVersion === 'translation' ? 'timingsTranslation'
+      : 'timings'
+    await db.updateSong(songId, { [lyricsField]: newLyrics, [timingsField]: newTimings })
+    setSong((s) => (s ? { ...s, [lyricsField]: newLyrics, [timingsField]: newTimings } : s))
+    setTimings(newTimings)
+    setSelectedForDelete(new Set())
+    setSelectMode(false)
+    setConfirmBulkDelete(false)
+  }
+
+  async function handleDeleteLine(index: number) {
+    if (!song) return
+    const newLyrics = activeLyrics.filter((_, i) => i !== index)
+    const newTimings: Timing[] = timings
+      .filter((t) => t.lineIndex !== index)
+      .map((t) => (t.lineIndex > index ? { ...t, lineIndex: t.lineIndex - 1 } : t))
+    const lyricsField =
+      activeVersion === 'romaji' ? 'lyricsRomaji'
+      : activeVersion === 'translation' ? 'lyricsTranslation'
+      : 'lyrics'
+    const timingsField =
+      activeVersion === 'romaji' ? 'timingsRomaji'
+      : activeVersion === 'translation' ? 'timingsTranslation'
+      : 'timings'
+    await db.updateSong(songId, { [lyricsField]: newLyrics, [timingsField]: newTimings })
+    setSong((s) => (s ? { ...s, [lyricsField]: newLyrics, [timingsField]: newTimings } : s))
+    setTimings(newTimings)
+    setConfirmDeleteIdx(null)
+    if (selectedLine === index) setSelectedLine(null)
+    if (editingLine === index) setEditingLine(null)
+  }
+
   if (!song) return null
 
   return (
@@ -206,10 +293,10 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
           <span className="text-[13px] text-text-2">Sync Lyrics with Audio</span>
           {activeVersion !== 'original' && (
             <span
-              className="text-[12px] font-semibold capitalize"
+              className="text-[12px] font-semibold"
               style={{ padding: '2px 10px', borderRadius: 16, background: '#EBE4FF', color: '#7060A0' }}
             >
-              {activeVersion}
+              {activeVersion === 'romaji' ? 'Romanized' : 'Translation'}
             </span>
           )}
         </div>
@@ -385,42 +472,128 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
 
         {/* Right column — timed lyrics list */}
         <div className="overflow-y-auto">
+          {/* Sticky toolbar: select mode + bulk delete */}
+          <div
+            className="sticky top-0 z-10 flex items-center justify-between gap-2"
+            style={{
+              padding: '10px 20px',
+              background: '#FFFFFF',
+              borderBottom: '1px solid rgba(100, 60, 180, 0.09)',
+            }}
+          >
+            <span className="text-[12px] font-semibold text-text-2">
+              {selectMode
+                ? selectedForDelete.size === 0
+                  ? 'Select lines to delete'
+                  : `${selectedForDelete.size} selected`
+                : `${activeLyrics.length} lines`}
+            </span>
+            <div className="flex items-center gap-2">
+              {selectMode && selectedForDelete.size > 0 && !confirmBulkDelete && (
+                <button
+                  onClick={() => setConfirmBulkDelete(true)}
+                  className="text-[12px] font-bold text-white"
+                  style={{ padding: '5px 12px', borderRadius: 7, background: '#EF4444' }}
+                >
+                  Delete {selectedForDelete.size}
+                </button>
+              )}
+              {selectMode && confirmBulkDelete && (
+                <>
+                  <span className="text-[12px] text-text-2">Delete {selectedForDelete.size} lines?</span>
+                  <button
+                    onClick={handleDeleteMultiple}
+                    className="text-[12px] font-bold text-white"
+                    style={{ padding: '4px 10px', borderRadius: 7, background: '#EF4444' }}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    onClick={() => setConfirmBulkDelete(false)}
+                    className="text-[12px] font-semibold text-text-2 underline"
+                    style={{ textUnderlineOffset: 3 }}
+                  >
+                    Cancel
+                  </button>
+                </>
+              )}
+              <button
+                onClick={toggleSelectMode}
+                className="text-[12px] font-semibold"
+                style={{
+                  padding: '5px 12px',
+                  borderRadius: 7,
+                  background: selectMode ? '#EBE4FF' : 'transparent',
+                  color: selectMode ? '#7060A0' : '#7060A0',
+                  border: '1px solid rgba(100, 60, 180, 0.13)',
+                }}
+              >
+                {selectMode ? 'Done' : 'Select'}
+              </button>
+            </div>
+          </div>
           {activeLyrics.map((line, i) => {
             const timing = timings.find((t) => t.lineIndex === i)
             const isDone = timing !== undefined
             const isNext = i === nextToMark
             const isActive = i === activeLine
             const isSelected = selectedLine === i
-            const highlightBg = isActive ? 'rgba(200, 241, 53, 0.18)' : isNext ? 'rgba(200, 241, 53, 0.07)' : 'transparent'
+            const isChecked = selectedForDelete.has(i)
+            const highlightBg = isChecked
+              ? 'rgba(200, 241, 53, 0.18)'
+              : isActive
+                ? 'rgba(200, 241, 53, 0.18)'
+                : isNext
+                  ? 'rgba(200, 241, 53, 0.07)'
+                  : 'transparent'
 
             return (
               <div
                 key={i}
                 ref={isNext ? currentRowRef : null}
+                onClick={selectMode ? () => toggleSelectedForDelete(i) : undefined}
                 style={{
                   borderBottom: '1px solid rgba(100, 60, 180, 0.09)',
                   background: highlightBg,
+                  cursor: selectMode ? 'pointer' : 'default',
                 }}
               >
                 <div
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: '54px 1fr 30px',
+                    gridTemplateColumns: selectMode ? '32px 54px 1fr 60px' : '54px 1fr 60px',
                     alignItems: 'center',
                     padding: '13px 20px',
                   }}
                 >
+                  {selectMode && (
+                    <span
+                      aria-label={isChecked ? 'Unselect line' : 'Select line'}
+                      className="flex items-center justify-center"
+                      style={{
+                        width: 18,
+                        height: 18,
+                        borderRadius: 4,
+                        border: `1.5px solid ${isChecked ? 'var(--accent-strong)' : 'rgba(100, 60, 180, 0.25)'}`,
+                        background: isChecked ? 'var(--accent-strong)' : '#FFFFFF',
+                        color: '#FFFFFF',
+                      }}
+                    >
+                      {isChecked && <CheckIcon size={12} color="currentColor" />}
+                    </span>
+                  )}
                   {/* Timestamp */}
                   <button
                     onClick={
-                      isDone
-                        ? () => {
+                      isDone && !selectMode
+                        ? (e) => {
+                            e.stopPropagation()
                             seekTo(Math.max(0, timing!.timestamp - 1.5))
                             setSelectedLine(isSelected ? null : i)
                           }
                         : undefined
                     }
-                    disabled={!isDone}
+                    disabled={!isDone || selectMode}
                     className="text-left"
                     style={{
                       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
@@ -459,18 +632,18 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
                       />
                     ) : (
                       <span
-                        className="cursor-text"
-                        onClick={() => handleEditStart(i, line)}
-                        title="Click to edit lyric text"
+                        className={selectMode ? '' : 'cursor-text'}
+                        onClick={selectMode ? undefined : (e) => { e.stopPropagation(); handleEditStart(i, line) }}
+                        title={selectMode ? undefined : 'Click to edit lyric text'}
                       >
                         {line}
                       </span>
                     )}
                   </div>
 
-                  {/* × button */}
-                  <div className="flex justify-end">
-                    {isDone && (
+                  {/* × (remove timing) + trash (delete row) */}
+                  <div className="flex justify-end items-center gap-1.5">
+                    {!selectMode && isDone && (
                       <button
                         onClick={() => handleRemove(i)}
                         aria-label="Remove timing"
@@ -480,32 +653,71 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
                         <XIcon size={14} color="currentColor" />
                       </button>
                     )}
+                    {!selectMode && (
+                      <button
+                        onClick={() => setConfirmDeleteIdx(i)}
+                        aria-label="Delete lyric row"
+                        className="text-text-2 hover:text-danger"
+                        style={{ padding: 2 }}
+                      >
+                        <TrashIcon size={14} color="currentColor" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
+                {/* Inline delete confirm */}
+                {confirmDeleteIdx === i && (
+                  <div
+                    className="flex items-center gap-2 justify-end"
+                    style={{ padding: '0 20px 12px' }}
+                  >
+                    <span className="text-[12px] text-text-2">Delete this line?</span>
+                    <button
+                      onClick={() => handleDeleteLine(i)}
+                      className="text-[12px] font-bold text-white"
+                      style={{ padding: '4px 10px', borderRadius: 7, background: '#EF4444' }}
+                    >
+                      Yes
+                    </button>
+                    <button
+                      onClick={() => setConfirmDeleteIdx(null)}
+                      className="text-[12px] font-semibold text-text-2 underline"
+                      style={{ textUnderlineOffset: 3 }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+
                 {/* Fine-tune bar (revealed on timestamp click) */}
-                {isSelected && isDone && (
+                {isSelected && isDone && !selectMode && (
                   <div
                     className="flex items-center gap-1.5 flex-wrap"
                     style={{ padding: '0 20px 12px' }}
                   >
-                    {([-0.5, -0.1, 0.1, 0.5] as const).map((delta) => (
-                      <button
-                        key={delta}
-                        onClick={() => handleAdjust(i, delta)}
-                        className="text-[11px]"
-                        style={{
-                          padding: '4px 9px',
-                          borderRadius: 7,
-                          background: '#EBE4FF',
-                          color: '#7060A0',
-                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {delta > 0 ? '+' : ''}{delta}s
-                      </button>
-                    ))}
+                    {([-0.5, -0.1, 0.1, 0.5] as const).map((delta) => {
+                      const isPressed = pressedAdjust?.line === i && pressedAdjust?.delta === delta
+                      return (
+                        <button
+                          key={delta}
+                          onClick={() => handleAdjust(i, delta)}
+                          className="text-[11px]"
+                          style={{
+                            padding: '4px 9px',
+                            borderRadius: 7,
+                            background: isPressed ? 'var(--accent)' : '#EBE4FF',
+                            color: isPressed ? '#1C0840' : '#7060A0',
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                            fontWeight: isPressed ? 700 : 600,
+                            transform: isPressed ? 'scale(1.08)' : 'scale(1)',
+                            transition: 'background 120ms ease, transform 120ms ease, color 120ms ease, font-weight 120ms ease',
+                          }}
+                        >
+                          {delta > 0 ? '+' : ''}{delta}s
+                        </button>
+                      )
+                    })}
                     <button
                       onClick={() => handleRemark(i)}
                       disabled={!ready}

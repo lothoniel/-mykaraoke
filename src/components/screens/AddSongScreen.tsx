@@ -4,7 +4,13 @@ import { useSpotify } from '../../hooks/useSpotify'
 import { fetchLyrics, type LrclibResult } from '../../lib/lrclib'
 import { extractVideoId } from '../../lib/youtube'
 import { generateId } from '../../lib/id'
+import { copyTimings } from '../../lib/timing-copy'
 import type { Screen, Timing } from '../../types'
+
+type CopyDialog =
+  | { kind: 'markers'; target: 'romaji' | 'translation'; markers: { index: number; text: string }[] }
+  | { kind: 'mismatch'; target: 'romaji' | 'translation'; originalCount: number; versionCount: number; strip: boolean }
+  | { kind: 'ok'; target: 'romaji' | 'translation'; count: number; partial?: { versionTotal: number; originalTotal: number } }
 
 type Props = { navigate: (s: Screen) => void }
 type LyricsTab = 'original' | 'romaji' | 'translation'
@@ -103,6 +109,9 @@ export default function AddSongScreen({ navigate }: Props) {
   const [fetchStatus, setFetchStatus] = useState<'idle' | 'loading' | 'notfound' | 'confirm'>('idle')
   const [pendingResult, setPendingResult] = useState<LrclibResult | null>(null)
   const [fetchedTimings, setFetchedTimings] = useState<Timing[] | null>(null)
+  const [fetchedTimingsRomaji, setFetchedTimingsRomaji] = useState<Timing[] | null>(null)
+  const [fetchedTimingsTranslation, setFetchedTimingsTranslation] = useState<Timing[] | null>(null)
+  const [copyDialog, setCopyDialog] = useState<CopyDialog | null>(null)
 
   const [spotifyTrackId, setSpotifyTrackId] = useState<string | undefined>()
   const [duration, setDuration] = useState<number | undefined>()
@@ -137,6 +146,45 @@ export default function AddSongScreen({ navigate }: Props) {
       setFetchedTimings(result.timings)
       setFetchStatus('idle')
     }
+  }
+
+  function runCopyTimings(target: 'romaji' | 'translation', strip: boolean | null, partial = false) {
+    if (!fetchedTimings || fetchedTimings.length === 0) return
+    const originalLines = lyricsText.split('\n').map((l) => l.trim()).filter(Boolean)
+    const versionText = target === 'romaji' ? lyricsRomajiText : lyricsTranslationText
+    const versionLines = versionText.split('\n').map((l) => l.trim()).filter(Boolean)
+    if (versionLines.length === 0 || originalLines.length === 0) return
+
+    const result = copyTimings(originalLines, fetchedTimings, versionLines, strip, partial ? 'partial' : 'strict')
+    if (result.kind === 'ok') {
+      if (result.strippedLyrics) {
+        const joined = result.strippedLyrics.join('\n')
+        if (target === 'romaji') setLyricsRomajiText(joined)
+        else setLyricsTranslationText(joined)
+      }
+      if (target === 'romaji') setFetchedTimingsRomaji(result.timings)
+      else setFetchedTimingsTranslation(result.timings)
+      setCopyDialog({
+        kind: 'ok',
+        target,
+        count: result.timings.length,
+        ...(result.partial && {
+          partial: { versionTotal: result.partial.versionTotal, originalTotal: result.partial.originalTotal },
+        }),
+      })
+      return
+    }
+    if (result.markers.length > 0 && strip === null) {
+      setCopyDialog({ kind: 'markers', target, markers: result.markers })
+      return
+    }
+    setCopyDialog({
+      kind: 'mismatch',
+      target,
+      originalCount: result.originalCount,
+      versionCount: result.versionCount,
+      strip: strip === true,
+    })
   }
 
   function applyResult(result: LrclibResult) {
@@ -178,6 +226,8 @@ export default function AddSongScreen({ navigate }: Props) {
         ? lyricsTranslationText.split('\n').map((l) => l.trim()).filter(Boolean)
         : undefined,
       timings,
+      timingsRomaji: fetchedTimingsRomaji ?? undefined,
+      timingsTranslation: fetchedTimingsTranslation ?? undefined,
       isFavorite: false,
       createdAt: new Date(),
       duration,
@@ -276,7 +326,33 @@ export default function AddSongScreen({ navigate }: Props) {
           {spotifyLoading && <p className="text-[11px] text-text-2 -mt-2 mb-2">Fetching from Spotify…</p>}
           {spotifyError && <p className="text-[11px] text-danger -mt-2 mb-2">{spotifyError}</p>}
 
-          <FormField label="YouTube Link" required>
+          <FormField
+            label="YouTube Link"
+            required
+            rightSlot={
+              <button
+                onClick={() => {
+                  const q = `${title} ${artist}`.trim()
+                  if (!q) return
+                  window.open(
+                    `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`,
+                    '_blank',
+                    'noopener,noreferrer',
+                  )
+                }}
+                disabled={!title.trim() && !artist.trim()}
+                className="flex items-center gap-1.5 text-[12px] font-semibold text-text-2 disabled:opacity-40 flex-none"
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: 10,
+                  background: 'transparent',
+                  border: '1px solid rgba(100, 60, 180, 0.09)',
+                }}
+              >
+                Search YouTube
+              </button>
+            }
+          >
             <input
               type="url"
               value={youtubeLink}
@@ -362,14 +438,33 @@ export default function AddSongScreen({ navigate }: Props) {
               </span>
               <span className="text-[15px] font-bold text-text">Lyrics Editor</span>
             </div>
-            <button
-              onClick={handleFetchLyrics}
-              disabled={fetchStatus === 'loading' || (!title.trim() && !artist.trim()) || lyricsTab !== 'original'}
-              className="text-[13px] font-semibold underline disabled:opacity-40"
-              style={{ color: 'var(--accent-strong)', textUnderlineOffset: 3 }}
-            >
-              {fetchStatus === 'loading' ? 'Searching…' : 'Fetch from LRCLIB'}
-            </button>
+            {lyricsTab === 'original' ? (
+              <button
+                onClick={handleFetchLyrics}
+                disabled={fetchStatus === 'loading' || (!title.trim() && !artist.trim())}
+                className="text-[13px] font-semibold underline disabled:opacity-40"
+                style={{ color: 'var(--accent-strong)', textUnderlineOffset: 3 }}
+              >
+                {fetchStatus === 'loading' ? 'Searching…' : 'Fetch from LRCLIB'}
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  const q = `${title} ${artist}`.trim()
+                  if (!q) return
+                  window.open(
+                    `https://genius.com/search?q=${encodeURIComponent(q)}`,
+                    '_blank',
+                    'noopener,noreferrer',
+                  )
+                }}
+                disabled={!title.trim() && !artist.trim()}
+                className="text-[13px] font-semibold underline disabled:opacity-40"
+                style={{ color: 'var(--accent-strong)', textUnderlineOffset: 3 }}
+              >
+                Search on Genius
+              </button>
+            )}
           </div>
 
           {/* Tabs */}
@@ -380,7 +475,7 @@ export default function AddSongScreen({ navigate }: Props) {
                 <button
                   key={tab}
                   onClick={() => setLyricsTab(tab)}
-                  className="text-[13px] capitalize"
+                  className="text-[13px]"
                   style={{
                     padding: '5px 15px',
                     borderRadius: 20,
@@ -389,7 +484,7 @@ export default function AddSongScreen({ navigate }: Props) {
                     fontWeight: active ? 700 : 500,
                   }}
                 >
-                  {tab}
+                  {tab === 'romaji' ? 'Romanized' : tab === 'translation' ? 'Translation' : 'Original'}
                 </button>
               )
             })}
@@ -455,13 +550,21 @@ export default function AddSongScreen({ navigate }: Props) {
             <textarea
               value={activeLyricsValue}
               onChange={(e) => {
-                if (lyricsTab === 'romaji') setLyricsRomajiText(e.target.value)
-                else if (lyricsTab === 'translation') setLyricsTranslationText(e.target.value)
-                else {
+                if (lyricsTab === 'romaji') {
+                  setLyricsRomajiText(e.target.value)
+                  if (fetchedTimingsRomaji) setFetchedTimingsRomaji(null)
+                  if (copyDialog?.target === 'romaji') setCopyDialog(null)
+                } else if (lyricsTab === 'translation') {
+                  setLyricsTranslationText(e.target.value)
+                  if (fetchedTimingsTranslation) setFetchedTimingsTranslation(null)
+                  if (copyDialog?.target === 'translation') setCopyDialog(null)
+                } else {
                   setLyricsText(e.target.value)
                   setFetchStatus('idle')
                   // Manual edits invalidate fetched timings — line indices would drift.
                   if (fetchedTimings) setFetchedTimings(null)
+                  if (fetchedTimingsRomaji) setFetchedTimingsRomaji(null)
+                  if (fetchedTimingsTranslation) setFetchedTimingsTranslation(null)
                 }
               }}
               placeholder={
@@ -480,24 +583,170 @@ export default function AddSongScreen({ navigate }: Props) {
             <div className="text-right text-[11px] text-text-2 mt-1.5 flex-none">{charCount} characters</div>
           </div>
 
-          <div className="text-[12px] text-text-2 mt-2 flex-none flex items-center gap-2" style={{ lineHeight: 1.5 }}>
-            {fetchedTimings && fetchedTimings.length > 0 ? (
-              <span
-                className="text-[11px] font-bold inline-flex items-center gap-1"
-                style={{
-                  padding: '3px 9px',
-                  borderRadius: 16,
-                  background: 'rgba(200, 241, 53, 0.18)',
-                  color: 'var(--accent-strong)',
-                  border: '1px solid rgba(200, 241, 53, 0.45)',
-                }}
-              >
-                ✓ {fetchedTimings.length} synced timings — saved with the song
-              </span>
+          <div className="text-[12px] text-text-2 mt-2 flex-none flex items-center gap-2 flex-wrap" style={{ lineHeight: 1.5 }}>
+            {lyricsTab === 'original' ? (
+              fetchedTimings && fetchedTimings.length > 0 ? (
+                <span
+                  className="text-[11px] font-bold inline-flex items-center gap-1"
+                  style={{
+                    padding: '3px 9px',
+                    borderRadius: 16,
+                    background: 'rgba(200, 241, 53, 0.18)',
+                    color: 'var(--accent-strong)',
+                    border: '1px solid rgba(200, 241, 53, 0.45)',
+                  }}
+                >
+                  ✓ {fetchedTimings.length} synced timings — saved with the song
+                </span>
+              ) : (
+                <span>Tip: Add [Chorus] or [Verse] tags to help with timing synchronization later.</span>
+              )
             ) : (
-              <span>Tip: Add [Chorus] or [Verse] tags to help with timing synchronization later.</span>
+              <>
+                {(() => {
+                  const target = lyricsTab as 'romaji' | 'translation'
+                  const versionLabel = target === 'romaji' ? 'Romanized' : 'Translation'
+                  const versionTimings = target === 'romaji' ? fetchedTimingsRomaji : fetchedTimingsTranslation
+                  const versionTextNonEmpty =
+                    target === 'romaji' ? lyricsRomajiText.trim().length > 0 : lyricsTranslationText.trim().length > 0
+                  const canCopy = !!fetchedTimings && fetchedTimings.length > 0 && versionTextNonEmpty
+                  return (
+                    <>
+                      {versionTimings && versionTimings.length > 0 ? (
+                        <span
+                          className="text-[11px] font-bold inline-flex items-center gap-1"
+                          style={{
+                            padding: '3px 9px',
+                            borderRadius: 16,
+                            background: 'rgba(200, 241, 53, 0.18)',
+                            color: 'var(--accent-strong)',
+                            border: '1px solid rgba(200, 241, 53, 0.45)',
+                          }}
+                        >
+                          ✓ {versionTimings.length} timings copied to {versionLabel}
+                        </span>
+                      ) : canCopy ? (
+                        <button
+                          onClick={() => runCopyTimings(target, null)}
+                          className="text-[11px] font-bold"
+                          style={{
+                            padding: '4px 10px',
+                            borderRadius: 16,
+                            background: '#EBE4FF',
+                            color: '#7060A0',
+                            border: '1px solid rgba(100, 60, 180, 0.13)',
+                          }}
+                          title="Copies current original timings — re-click after edits."
+                        >
+                          Copy timings from original
+                        </button>
+                      ) : (
+                        <span>
+                          {!fetchedTimings || fetchedTimings.length === 0
+                            ? 'Fetch original lyrics from LRCLIB to enable timing copy.'
+                            : `Paste ${versionLabel.toLowerCase()} lyrics to copy timings.`}
+                        </span>
+                      )}
+                    </>
+                  )
+                })()}
+              </>
             )}
           </div>
+
+          {copyDialog && (lyricsTab === 'romaji' || lyricsTab === 'translation') && copyDialog.target === lyricsTab && (
+            <div
+              className="mt-2 flex-none"
+              style={{
+                padding: '10px 12px',
+                borderRadius: 10,
+                background: copyDialog.kind === 'mismatch' ? 'rgba(239, 68, 68, 0.06)' : '#FAFAFE',
+                border: `1px solid ${copyDialog.kind === 'mismatch' ? 'rgba(239, 68, 68, 0.30)' : 'rgba(100, 60, 180, 0.13)'}`,
+              }}
+            >
+              {copyDialog.kind === 'markers' && (
+                <>
+                  <div className="text-[12px] text-text mb-2">
+                    Found {copyDialog.markers.length} section marker{copyDialog.markers.length === 1 ? '' : 's'} in{' '}
+                    {copyDialog.target === 'romaji' ? 'Romanized' : 'Translation'}:{' '}
+                    <span className="font-mono text-text-2">
+                      {copyDialog.markers.slice(0, 4).map((m) => m.text).join(', ')}
+                      {copyDialog.markers.length > 4 ? '…' : ''}
+                    </span>
+                    . Strip them so line counts match?
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => runCopyTimings(copyDialog.target, true)}
+                      className="text-[12px] font-bold"
+                      style={{ padding: '4px 12px', borderRadius: 7, background: 'var(--accent)', color: '#1C0840' }}
+                    >
+                      Yes, strip & copy
+                    </button>
+                    <button
+                      onClick={() => runCopyTimings(copyDialog.target, false)}
+                      className="text-[12px] font-semibold text-text-2 underline"
+                      style={{ textUnderlineOffset: 3 }}
+                    >
+                      No, keep them
+                    </button>
+                    <button
+                      onClick={() => setCopyDialog(null)}
+                      className="text-[12px] font-semibold text-text-2 underline ml-auto"
+                      style={{ textUnderlineOffset: 3 }}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </>
+              )}
+              {copyDialog.kind === 'mismatch' && (
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[12px] text-danger">
+                    Line counts don't match — Original: {copyDialog.originalCount}, {copyDialog.target === 'romaji' ? 'Romanized' : 'Translation'}: {copyDialog.versionCount}. Edit lyrics first, or copy what fits.
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => runCopyTimings(copyDialog.target, copyDialog.strip, true)}
+                      className="text-[12px] font-bold"
+                      style={{ padding: '4px 12px', borderRadius: 7, background: 'var(--accent)', color: '#1C0840' }}
+                    >
+                      Copy what fits ({Math.min(copyDialog.originalCount, copyDialog.versionCount)} lines)
+                    </button>
+                    <button
+                      onClick={() => setCopyDialog(null)}
+                      className="text-[12px] font-semibold text-text-2 underline"
+                      style={{ textUnderlineOffset: 3 }}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              )}
+              {copyDialog.kind === 'ok' && (
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[12px]" style={{ color: 'var(--accent-strong)' }}>
+                    ✓ Copied {copyDialog.count} timings to {copyDialog.target === 'romaji' ? 'Romanized' : 'Translation'}.
+                    {copyDialog.partial && (
+                      <>
+                        {' '}
+                        <span className="text-text-2">
+                          Original had {copyDialog.partial.originalTotal} lines, {copyDialog.target === 'romaji' ? 'Romanized' : 'Translation'} has {copyDialog.partial.versionTotal}. Adjust drift after saving.
+                        </span>
+                      </>
+                    )}
+                  </span>
+                  <button
+                    onClick={() => setCopyDialog(null)}
+                    className="text-[12px] font-semibold text-text-2 underline"
+                    style={{ textUnderlineOffset: 3 }}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -542,6 +791,7 @@ export default function AddSongScreen({ navigate }: Props) {
           </button>
         </div>
       </div>
+
     </div>
   )
 }

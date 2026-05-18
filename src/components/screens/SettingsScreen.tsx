@@ -472,7 +472,7 @@ export default function SettingsScreen({ navigate }: Props) {
             </div>
             <div className="flex items-center gap-3">
               <Toggle value={lyricSettings.romaji} onChange={(v) => updateLyrics({ romaji: v })} />
-              <span className="text-[13px] font-semibold text-text">Romaji Phonetic</span>
+              <span className="text-[13px] font-semibold text-text">Romanized Phonetic</span>
             </div>
             <div className="flex items-center gap-3">
               <Toggle value={lyricSettings.translations} onChange={(v) => updateLyrics({ translations: v })} />
