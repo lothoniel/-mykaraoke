@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Screen } from './types'
-import Sidebar from './components/Sidebar'
+import Header from './components/Header'
 import HomeScreen from './components/screens/HomeScreen'
 import LibraryScreen from './components/screens/LibraryScreen'
 import AddSongScreen from './components/screens/AddSongScreen'
@@ -66,9 +66,9 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen flex flex-row bg-bg overflow-hidden">
-      <Sidebar navigate={navigate} currentScreen={screen} />
-      <main className="flex-1 overflow-auto pt-12 md:pt-0">{renderScreen()}</main>
+    <div className="h-screen flex flex-col bg-bg overflow-hidden">
+      <Header navigate={navigate} currentScreen={screen} />
+      <main className="flex-1 overflow-auto">{renderScreen()}</main>
     </div>
   )
 }
