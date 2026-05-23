@@ -7,7 +7,7 @@ import type { Screen, Song, Timing } from '../../types'
 type Props = {
   songId: string
   navigate: (s: Screen) => void
-  version?: 'original' | 'romaji' | 'translation'
+  version?: 'original' | 'romanized' | 'translation'
 }
 
 const strokeAttrs = {
@@ -94,7 +94,7 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
       if (!s) return
       setSong(s)
       const t =
-        activeVersion === 'romaji' ? (s.timingsRomaji ?? [])
+        activeVersion === 'romanized' ? (s.timingsRomanized ?? [])
         : activeVersion === 'translation' ? (s.timingsTranslation ?? [])
         : (s.timings ?? [])
       setTimings(t)
@@ -125,8 +125,8 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
 
   const activeLyrics = !song
     ? []
-    : activeVersion === 'romaji'
-      ? (song.lyricsRomaji ?? song.lyrics)
+    : activeVersion === 'romanized'
+      ? (song.lyricsRomanized ?? song.lyrics)
       : activeVersion === 'translation'
         ? (song.lyricsTranslation ?? song.lyrics)
         : song.lyrics
@@ -212,7 +212,7 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
   function handleEditSave(index: number) {
     if (!song) return
     const lyricsField =
-      activeVersion === 'romaji' ? 'lyricsRomaji'
+      activeVersion === 'romanized' ? 'lyricsRomanized'
       : activeVersion === 'translation' ? 'lyricsTranslation'
       : 'lyrics'
     const updated = [...activeLyrics]
@@ -280,11 +280,11 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
       .filter((t) => !toDelete.has(t.lineIndex))
       .map((t) => ({ ...t, lineIndex: t.lineIndex - shiftFor(t.lineIndex) }))
     const lyricsField =
-      activeVersion === 'romaji' ? 'lyricsRomaji'
+      activeVersion === 'romanized' ? 'lyricsRomanized'
       : activeVersion === 'translation' ? 'lyricsTranslation'
       : 'lyrics'
     const timingsField =
-      activeVersion === 'romaji' ? 'timingsRomaji'
+      activeVersion === 'romanized' ? 'timingsRomanized'
       : activeVersion === 'translation' ? 'timingsTranslation'
       : 'timings'
     await db.updateSong(songId, { [lyricsField]: newLyrics, [timingsField]: newTimings })
@@ -304,11 +304,11 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
       .filter((t) => t.lineIndex !== index)
       .map((t) => (t.lineIndex > index ? { ...t, lineIndex: t.lineIndex - 1 } : t))
     const lyricsField =
-      activeVersion === 'romaji' ? 'lyricsRomaji'
+      activeVersion === 'romanized' ? 'lyricsRomanized'
       : activeVersion === 'translation' ? 'lyricsTranslation'
       : 'lyrics'
     const timingsField =
-      activeVersion === 'romaji' ? 'timingsRomaji'
+      activeVersion === 'romanized' ? 'timingsRomanized'
       : activeVersion === 'translation' ? 'timingsTranslation'
       : 'timings'
     await db.updateSong(songId, { [lyricsField]: newLyrics, [timingsField]: newTimings })
@@ -343,7 +343,7 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
               className="text-[12px] font-semibold"
               style={{ padding: '2px 10px', borderRadius: 16, background: '#EBE4FF', color: '#7060A0' }}
             >
-              {activeVersion === 'romaji' ? 'Romanized' : 'Translation'}
+              {activeVersion === 'romanized' ? 'Romanized' : 'Translation'}
             </span>
           )}
         </div>

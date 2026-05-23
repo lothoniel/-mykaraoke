@@ -152,10 +152,14 @@ export default function Header({ navigate, currentScreen }: Props) {
           </div>
         </div>
         <div
-          className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[14px] font-bold flex-none relative"
-          style={{ background: 'linear-gradient(135deg, #7C3AED 0%, var(--accent) 100%)' }}
+          className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[14px] font-bold flex-none relative overflow-hidden"
+          style={profile.image ? undefined : { background: 'linear-gradient(135deg, #7C3AED 0%, var(--accent) 100%)' }}
         >
-          {initial}
+          {profile.image ? (
+            <img src={profile.image} alt="" className="w-full h-full object-cover" />
+          ) : (
+            initial
+          )}
           <span
             className="md:hidden absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-sidebar"
             style={{ backgroundColor: spotifyConnected ? '#16A34A' : '#9CA3AF' }}

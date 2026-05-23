@@ -8,11 +8,11 @@ import type { Screen, Song } from '../../types'
 
 type Props = {
   songId: string
-  version?: 'original' | 'romaji' | 'translation'
+  version?: 'original' | 'romanized' | 'translation'
   navigate: (s: Screen) => void
   goBack: () => void
 }
-type LyricsTab = 'original' | 'romaji' | 'translation'
+type LyricsTab = 'original' | 'romanized' | 'translation'
 
 const strokeAttrs = {
   strokeWidth: 1.8,
@@ -174,7 +174,7 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
   const [currentTime, setCurrentTime] = useState(0)
   const [isFavorite, setIsFavorite] = useState(false)
   const [playerMode, setPlayerMode] = useState<'youtube' | 'spotify'>('youtube')
-  const [lyricsTab, setLyricsTab] = useState<LyricsTab>(version ?? 'original')
+  const [lyricsTab, setLyricsTab] = useState<LyricsTab>(() => version ?? getLyricSettings().primary)
   const [relatedTab, setRelatedTab] = useState<'artist' | 'foryou'>('artist')
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -185,10 +185,21 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
         setSong(s)
         setIsFavorite(s.isFavorite)
         setPlayerMode(s.youtubeLink ? 'youtube' : 'spotify')
+        if (!version) {
+          const has: Record<LyricsTab, boolean> = {
+            original: s.lyrics.length > 0,
+            romanized: (s.lyricsRomanized?.length ?? 0) > 0,
+            translation: (s.lyricsTranslation?.length ?? 0) > 0,
+          }
+          const preferred = getLyricSettings().primary
+          const fallbackOrder: LyricsTab[] = ['original', 'romanized', 'translation']
+          const next = has[preferred] ? preferred : (fallbackOrder.find((t) => has[t]) ?? 'original')
+          setLyricsTab(next)
+        }
       }
     })
     db.getAllSongs().then(setAllSongs)
-  }, [songId])
+  }, [songId, version])
 
   const youtubeVideoId = song ? extractVideoId(song.youtubeLink ?? '') ?? null : null
   const { playerState, playerError, getCurrentTime, getDuration, seekTo, pause: pauseYouTube } =
@@ -227,32 +238,32 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
   }
 
   const lyricSettings = useMemo(() => getLyricSettings(), [])
-  const showOrigTab = !!song && lyricSettings.origLang && song.lyrics.length > 0
-  const showRomajiTab = !!song && lyricSettings.romaji && (song.lyricsRomaji?.length ?? 0) > 0
-  const showTranslationTab = !!song && lyricSettings.translations && (song.lyricsTranslation?.length ?? 0) > 0
+  const showOrigTab = !!song && song.lyrics.length > 0
+  const showRomanizedTab = !!song && (song.lyricsRomanized?.length ?? 0) > 0
+  const showTranslationTab = !!song && (song.lyricsTranslation?.length ?? 0) > 0
   const visibleTabs = useMemo(
     () =>
       [
         showOrigTab && 'original',
-        showRomajiTab && 'romaji',
+        showRomanizedTab && 'romanized',
         showTranslationTab && 'translation',
       ].filter(Boolean) as LyricsTab[],
-    [showOrigTab, showRomajiTab, showTranslationTab],
+    [showOrigTab, showRomanizedTab, showTranslationTab],
   )
 
   const activeLyrics: string[] =
     song == null
       ? []
-      : lyricsTab === 'romaji' && showRomajiTab
-        ? (song.lyricsRomaji ?? song.lyrics)
+      : lyricsTab === 'romanized' && showRomanizedTab
+        ? (song.lyricsRomanized ?? song.lyrics)
         : lyricsTab === 'translation' && showTranslationTab
           ? (song.lyricsTranslation ?? song.lyrics)
           : song.lyrics
 
   const activeTimings = !song
     ? []
-    : lyricsTab === 'romaji' && showRomajiTab
-      ? (song.timingsRomaji ?? [])
+    : lyricsTab === 'romanized' && showRomanizedTab
+      ? (song.timingsRomanized ?? [])
       : lyricsTab === 'translation' && showTranslationTab
         ? (song.timingsTranslation ?? [])
         : (song.timings ?? [])
@@ -261,9 +272,15 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
   const currentLineIdx = findCurrentLineIndex(sortedTimings, displayTime)
   const hasTimings = activeTimings.length > 0
 
-  const romajiForCurrent =
-    song && lyricsTab === 'original' && showRomajiTab && currentLineIdx >= 0
-      ? (song.lyricsRomaji?.[currentLineIdx] ?? null)
+  function lyricsForVersion(v: LyricsTab): string[] | undefined {
+    if (!song) return undefined
+    if (v === 'original') return song.lyrics
+    if (v === 'romanized') return song.lyricsRomanized
+    return song.lyricsTranslation
+  }
+  const secondaryForCurrent =
+    lyricSettings.paired && song && currentLineIdx >= 0 && lyricSettings.secondary !== lyricsTab
+      ? (lyricsForVersion(lyricSettings.secondary)?.[currentLineIdx] ?? null)
       : null
 
   if (!song) {
@@ -618,7 +635,7 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
                           fontWeight: active ? 700 : 500,
                         }}
                       >
-                        {tab === 'original' ? 'Orig' : tab === 'romaji' ? 'Roman' : 'Trans'}
+                        {tab === 'original' ? 'Orig' : tab === 'romanized' ? 'Roman' : 'Trans'}
                       </button>
                     )
                   })}
@@ -663,6 +680,14 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
                 const isCur = state === 'current'
                 const isNext = state === 'next'
                 const isPast = state === 'past'
+                const activeSize = lyricSettings.fontSize
+                const nextSize = Math.round(activeSize * 17 / 26)
+                const restSize = Math.round(activeSize * 13 / 26)
+                const nonActiveWeight = lyricSettings.bold ? 700 : (isNext ? 600 : 400)
+                const transitionMs = lyricSettings.scrollSpeed * 10
+                const lineTransition = transitionMs > 0
+                  ? `font-size ${transitionMs}ms ease, color ${transitionMs}ms ease, font-weight ${transitionMs}ms ease, opacity ${transitionMs}ms ease, text-shadow ${transitionMs}ms ease`
+                  : undefined
                 return (
                   <div
                     key={idx}
@@ -674,22 +699,24 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
                   >
                     <div
                       style={{
-                        fontWeight: isCur ? 800 : isNext ? 600 : 400,
-                        fontSize: isCur ? 26 : isNext ? 17 : 13,
-                        color: isCur ? '#7C3AED' : isNext ? '#1C0840' : '#7060A0',
+                        display: 'inline-block',
+                        fontWeight: isCur ? 800 : nonActiveWeight,
+                        fontSize: isCur ? activeSize : isNext ? nextSize : restSize,
+                        color: isCur ? lyricSettings.fontColor : isNext ? '#1C0840' : '#7060A0',
                         opacity: isPast ? 0.3 : state === 'upcoming' ? 0.2 : 1,
                         letterSpacing: isCur ? '-0.3px' : 0,
                         lineHeight: 1.3,
+                        textShadow: isCur && lyricSettings.glow ? `0 0 20px ${lyricSettings.hlColor}` : undefined,
+                        transition: lineTransition,
                       }}
                     >
                       {line}
                     </div>
-                    {isCur && romajiForCurrent && (
+                    {isCur && secondaryForCurrent && (
                       <div
-                        className="italic"
-                        style={{ fontSize: 12, color: '#7060A0', opacity: 0.6, marginTop: 5 }}
+                        style={{ fontSize: 14, fontWeight: 400, color: '#7060A0', marginTop: 5 }}
                       >
-                        {romajiForCurrent}
+                        {secondaryForCurrent}
                       </div>
                     )}
                   </div>

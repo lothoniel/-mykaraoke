@@ -7,7 +7,7 @@ import MarkerConfirmModal from './MarkerConfirmModal'
 import LyricAlignModal from './LyricAlignModal'
 import type { Screen, Song, Timing } from '../../types'
 
-type CopyTarget = 'romaji' | 'translation'
+type CopyTarget = 'romanized' | 'translation'
 
 type CopyDialog =
   | { kind: 'markers'; target: CopyTarget; markers: { index: number; text: string }[] }
@@ -23,12 +23,12 @@ type FormSnapshot = {
   youtubeLink: string
   coverArt: string
   lyricsText: string
-  lyricsRomajiText: string
+  lyricsRomanizedText: string
   lyricsTranslationText: string
 }
 
 type Props = { songId: string; navigate: (s: Screen) => void; goBack: () => void }
-type LyricsTab = 'original' | 'romaji' | 'translation'
+type LyricsTab = 'original' | 'romanized' | 'translation'
 
 const strokeAttrs = {
   strokeWidth: 1.8,
@@ -125,7 +125,7 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
   const [youtubeLink, setYoutubeLink] = useState('')
   const [coverArt, setCoverArt] = useState('')
   const [lyricsText, setLyricsText] = useState('')
-  const [lyricsRomajiText, setLyricsRomajiText] = useState('')
+  const [lyricsRomanizedText, setLyricsRomanizedText] = useState('')
   const [lyricsTranslationText, setLyricsTranslationText] = useState('')
   const [lyricsTab, setLyricsTab] = useState<LyricsTab>('original')
   const [error, setError] = useState('')
@@ -149,10 +149,10 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
       setYoutubeLink(s.youtubeLink ?? '')
       setCoverArt(s.coverArt ?? '')
       const lyricsJoined = s.lyrics.join('\n')
-      const romajiJoined = s.lyricsRomaji?.join('\n') ?? ''
+      const romanizedJoined = s.lyricsRomanized?.join('\n') ?? ''
       const translationJoined = s.lyricsTranslation?.join('\n') ?? ''
       setLyricsText(lyricsJoined)
-      setLyricsRomajiText(romajiJoined)
+      setLyricsRomanizedText(romanizedJoined)
       setLyricsTranslationText(translationJoined)
       initialFormRef.current = {
         title: s.title,
@@ -161,7 +161,7 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
         youtubeLink: s.youtubeLink ?? '',
         coverArt: s.coverArt ?? '',
         lyricsText: lyricsJoined,
-        lyricsRomajiText: romajiJoined,
+        lyricsRomanizedText: romanizedJoined,
         lyricsTranslationText: translationJoined,
       }
     })
@@ -177,7 +177,7 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
       youtubeLink !== init.youtubeLink ||
       coverArt !== init.coverArt ||
       lyricsText !== init.lyricsText ||
-      lyricsRomajiText !== init.lyricsRomajiText ||
+      lyricsRomanizedText !== init.lyricsRomanizedText ||
       lyricsTranslationText !== init.lyricsTranslationText
     )
   })()
@@ -217,8 +217,8 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
       youtubeLink: youtubeLink.trim(),
       coverArt: coverArt.trim() || undefined,
       lyrics,
-      lyricsRomaji: lyricsRomajiText.trim()
-        ? lyricsRomajiText.split('\n').map((l) => l.trim()).filter(Boolean)
+      lyricsRomanized: lyricsRomanizedText.trim()
+        ? lyricsRomanizedText.split('\n').map((l) => l.trim()).filter(Boolean)
         : undefined,
       lyricsTranslation: lyricsTranslationText.trim()
         ? lyricsTranslationText.split('\n').map((l) => l.trim()).filter(Boolean)
@@ -265,7 +265,7 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
     const originalTimings = fetchedTimings ?? song.timings ?? []
     if (originalTimings.length === 0) return
     const originalLines = lyricsText.split('\n').map((l) => l.trim()).filter(Boolean)
-    const versionText = target === 'romaji' ? lyricsRomajiText : lyricsTranslationText
+    const versionText = target === 'romanized' ? lyricsRomanizedText : lyricsTranslationText
     const versionLines =
       overrideVersionLines ?? versionText.split('\n').map((l) => l.trim()).filter(Boolean)
     if (versionLines.length === 0 || originalLines.length === 0) return
@@ -273,14 +273,14 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
     const result = copyTimings(originalLines, originalTimings, versionLines, strip, partial ? 'partial' : 'strict')
     if (result.kind === 'ok') {
       const finalVersionLines = result.strippedLyrics ?? versionLines
-      const lyricsField = target === 'romaji' ? 'lyricsRomaji' : 'lyricsTranslation'
-      const timingsField = target === 'romaji' ? 'timingsRomaji' : 'timingsTranslation'
+      const lyricsField = target === 'romanized' ? 'lyricsRomanized' : 'lyricsTranslation'
+      const timingsField = target === 'romanized' ? 'timingsRomanized' : 'timingsTranslation'
       await db.updateSong(songId, { [lyricsField]: finalVersionLines, [timingsField]: result.timings })
       setSong((s) => (s ? { ...s, [lyricsField]: finalVersionLines, [timingsField]: result.timings } : s))
       const finalChangedLyrics = result.strippedLyrics != null || overrideVersionLines != null
       if (finalChangedLyrics) {
         const joined = finalVersionLines.join('\n')
-        if (target === 'romaji') setLyricsRomajiText(joined)
+        if (target === 'romanized') setLyricsRomanizedText(joined)
         else setLyricsTranslationText(joined)
       }
       setAlignState(null)
@@ -301,7 +301,7 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
     // Persist any stripping that happened, even if counts still mismatch
     if (result.strippedLyrics) {
       const joined = result.strippedLyrics.join('\n')
-      if (target === 'romaji') setLyricsRomajiText(joined)
+      if (target === 'romanized') setLyricsRomanizedText(joined)
       else setLyricsTranslationText(joined)
     }
     setCopyDialog({
@@ -317,7 +317,7 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
     if (!song) return
     const originalTimings = fetchedTimings ?? song.timings ?? []
     const originalLines = lyricsText.split('\n').map((l) => l.trim()).filter(Boolean)
-    const versionText = target === 'romaji' ? lyricsRomajiText : lyricsTranslationText
+    const versionText = target === 'romanized' ? lyricsRomanizedText : lyricsTranslationText
     const versionLines = versionText.split('\n').map((l) => l.trim()).filter(Boolean)
     setAlignState({ target, originalLines, originalTimings, versionLines })
   }
@@ -330,7 +330,7 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
   if (!song) return null
 
   const activeLyricsValue =
-    lyricsTab === 'romaji' ? lyricsRomajiText
+    lyricsTab === 'romanized' ? lyricsRomanizedText
     : lyricsTab === 'translation' ? lyricsTranslationText
     : lyricsText
 
@@ -484,7 +484,7 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
               }}
             >
               <ClockIcon size={14} color="currentColor" />
-              Edit timings ({lyricsTab === 'romaji' ? 'romanized' : lyricsTab})
+              Edit timings ({lyricsTab === 'romanized' ? 'romanized' : lyricsTab})
             </button>
           </div>
         </div>
@@ -537,7 +537,7 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
           </div>
 
           <div className="flex gap-1.5 mb-3 flex-none">
-            {(['original', 'romaji', 'translation'] as const).map((tab) => {
+            {(['original', 'romanized', 'translation'] as const).map((tab) => {
               const active = lyricsTab === tab
               return (
                 <button
@@ -552,7 +552,7 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
                     fontWeight: active ? 700 : 500,
                   }}
                 >
-                  {tab === 'romaji' ? 'Romanized' : tab === 'translation' ? 'Translation' : 'Original'}
+                  {tab === 'romanized' ? 'Romanized' : tab === 'translation' ? 'Translation' : 'Original'}
                 </button>
               )
             })}
@@ -613,9 +613,9 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
             <textarea
               value={activeLyricsValue}
               onChange={(e) => {
-                if (lyricsTab === 'romaji') {
-                  setLyricsRomajiText(e.target.value)
-                  if (copyDialog?.target === 'romaji') setCopyDialog(null)
+                if (lyricsTab === 'romanized') {
+                  setLyricsRomanizedText(e.target.value)
+                  if (copyDialog?.target === 'romanized') setCopyDialog(null)
                 } else if (lyricsTab === 'translation') {
                   setLyricsTranslationText(e.target.value)
                   if (copyDialog?.target === 'translation') setCopyDialog(null)
@@ -628,7 +628,7 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
               placeholder={
                 lyricsTab === 'original'
                   ? 'Paste lyrics here, one line per lyric line…'
-                  : lyricsTab === 'romaji'
+                  : lyricsTab === 'romanized'
                     ? 'Paste romanized lyrics here…'
                     : 'Paste translated lyrics here…'
               }
@@ -662,11 +662,11 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
             ) : (
               <>
                 {(() => {
-                  const target = lyricsTab as 'romaji' | 'translation'
-                  const versionLabel = target === 'romaji' ? 'Romanized' : 'Translation'
-                  const versionTimings = target === 'romaji' ? song.timingsRomaji : song.timingsTranslation
+                  const target = lyricsTab as 'romanized' | 'translation'
+                  const versionLabel = target === 'romanized' ? 'Romanized' : 'Translation'
+                  const versionTimings = target === 'romanized' ? song.timingsRomanized : song.timingsTranslation
                   const versionTextNonEmpty =
-                    target === 'romaji' ? lyricsRomajiText.trim().length > 0 : lyricsTranslationText.trim().length > 0
+                    target === 'romanized' ? lyricsRomanizedText.trim().length > 0 : lyricsTranslationText.trim().length > 0
                   const sourceTimings = fetchedTimings ?? song.timings ?? []
                   const canCopy = sourceTimings.length > 0 && versionTextNonEmpty
                   return (
@@ -716,7 +716,7 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
             )}
           </div>
 
-          {copyDialog && (lyricsTab === 'romaji' || lyricsTab === 'translation') && copyDialog.target === lyricsTab && (
+          {copyDialog && (lyricsTab === 'romanized' || lyricsTab === 'translation') && copyDialog.target === lyricsTab && (
             <div
               className="mt-2 flex-none"
               style={{
@@ -729,7 +729,7 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
               {copyDialog.kind === 'mismatch' && (
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <span className="text-[12px] text-danger">
-                    Line counts don't match — Original: {copyDialog.originalCount}, {copyDialog.target === 'romaji' ? 'Romanized' : 'Translation'}: {copyDialog.versionCount}.
+                    Line counts don't match — Original: {copyDialog.originalCount}, {copyDialog.target === 'romanized' ? 'Romanized' : 'Translation'}: {copyDialog.versionCount}.
                   </span>
                   <div className="flex items-center gap-2">
                     <button
@@ -759,12 +759,12 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
               {copyDialog.kind === 'ok' && (
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <span className="text-[12px]" style={{ color: 'var(--accent-strong)' }}>
-                    ✓ Copied {copyDialog.count} timings to {copyDialog.target === 'romaji' ? 'Romanized' : 'Translation'}.
+                    ✓ Copied {copyDialog.count} timings to {copyDialog.target === 'romanized' ? 'Romanized' : 'Translation'}.
                     {copyDialog.partial && (
                       <>
                         {' '}
                         <span className="text-text-2">
-                          Original had {copyDialog.partial.originalTotal} lines, {copyDialog.target === 'romaji' ? 'Romanized' : 'Translation'} has {copyDialog.partial.versionTotal} — adjust drift in Edit timings.
+                          Original had {copyDialog.partial.originalTotal} lines, {copyDialog.target === 'romanized' ? 'Romanized' : 'Translation'} has {copyDialog.partial.versionTotal} — adjust drift in Edit timings.
                         </span>
                       </>
                     )}
@@ -931,7 +931,7 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
       {copyDialog?.kind === 'markers' && (
         <MarkerConfirmModal
           markers={copyDialog.markers}
-          versionLabel={copyDialog.target === 'romaji' ? 'Romanized' : 'Translation'}
+          versionLabel={copyDialog.target === 'romanized' ? 'Romanized' : 'Translation'}
           onCancel={() => setCopyDialog(null)}
           onConfirm={(indices) => runCopyTimings(copyDialog.target, indices)}
         />
@@ -942,7 +942,7 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
           originalLines={alignState.originalLines}
           originalTimings={alignState.originalTimings}
           versionLines={alignState.versionLines}
-          versionLabel={alignState.target === 'romaji' ? 'Romanized' : 'Translation'}
+          versionLabel={alignState.target === 'romanized' ? 'Romanized' : 'Translation'}
           onCancel={() => setAlignState(null)}
           onApply={(aligned) => runCopyTimings(alignState.target, false, false, aligned)}
         />

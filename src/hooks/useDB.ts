@@ -21,10 +21,10 @@ export async function updateSong(id: string, updates: Partial<Song>): Promise<vo
 export async function updateTimings(
   id: string,
   timings: Timing[],
-  version: 'original' | 'romaji' | 'translation' = 'original'
+  version: 'original' | 'romanized' | 'translation' = 'original'
 ): Promise<void> {
-  if (version === 'romaji') {
-    await db.songs.update(id, { timingsRomaji: timings })
+  if (version === 'romanized') {
+    await db.songs.update(id, { timingsRomanized: timings })
   } else if (version === 'translation') {
     await db.songs.update(id, { timingsTranslation: timings })
   } else {

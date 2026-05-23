@@ -12,10 +12,10 @@ export type Song = {
   youtubeLink?: string
   coverArt?: string
   lyrics: string[]
-  lyricsRomaji?: string[]
+  lyricsRomanized?: string[]
   lyricsTranslation?: string[]
   timings: Timing[]
-  timingsRomaji?: Timing[]
+  timingsRomanized?: Timing[]
   timingsTranslation?: Timing[]
   isFavorite: boolean
   createdAt: Date
@@ -30,7 +30,7 @@ export type Screen =
   | { name: 'home' }
   | { name: 'library' }
   | { name: 'add' }
-  | { name: 'timing'; songId: string; version?: 'original' | 'romaji' | 'translation' }
+  | { name: 'timing'; songId: string; version?: 'original' | 'romanized' | 'translation' }
   | { name: 'playback'; songId: string }
   | { name: 'edit'; songId: string }
   | { name: 'settings' }

@@ -9,6 +9,20 @@ class MyKaraokeDB extends Dexie {
     this.version(1).stores({
       songs: 'id, title, artist, isFavorite, createdAt',
     })
+    this.version(2).stores({
+      songs: 'id, title, artist, isFavorite, createdAt',
+    }).upgrade((tx) =>
+      tx.table('songs').toCollection().modify((s: Record<string, unknown>) => {
+        if ('lyricsRomaji' in s) {
+          s.lyricsRomanized = s.lyricsRomaji
+          delete s.lyricsRomaji
+        }
+        if ('timingsRomaji' in s) {
+          s.timingsRomanized = s.timingsRomaji
+          delete s.timingsRomaji
+        }
+      }),
+    )
   }
 }
 

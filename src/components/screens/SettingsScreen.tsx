@@ -1,14 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
 import * as db from '../../hooks/useDB'
 import {
+  addCustomSwatch,
   applyAccent,
+  DEFAULT_LYRIC_SETTINGS,
+  DEFAULT_THEME,
+  getCustomSwatches,
   getLyricSettings,
   getProfile,
   getTheme,
+  removeCustomSwatch,
   saveLyricSettings,
   saveProfile,
   saveTheme,
+  type CustomSwatches,
   type LyricSettings,
+  type LyricVersion,
+  type SwatchPurpose,
 } from '../../lib/settings'
 import { clearOAuthToken, getStoredOAuthToken, startOAuthFlow } from '../../lib/spotify'
 import type { Screen, Song } from '../../types'
@@ -30,6 +38,92 @@ const ACCENT_SWATCHES: { id: string; bg: string; strong: string; label: string }
 ]
 
 const HIGHLIGHT_SWATCHES = ['#C8F135', '#A78BFA', '#34D399', '#F472B6']
+
+function hexToHsl(hex: string): [number, number, number] {
+  const m = hex.replace('#', '').match(/.{2}/g)
+  if (!m) return [0, 0, 0]
+  const [r, g, b] = m.map((x) => parseInt(x, 16) / 255)
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const l = (max + min) / 2
+  let h = 0
+  let s = 0
+  if (max !== min) {
+    const d = max - min
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break
+      case g: h = (b - r) / d + 2; break
+      case b: h = (r - g) / d + 4; break
+    }
+    h *= 60
+  }
+  return [h, s, l]
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
+  const m = l - c / 2
+  let r = 0, g = 0, b = 0
+  if (h < 60) { r = c; g = x; b = 0 }
+  else if (h < 120) { r = x; g = c; b = 0 }
+  else if (h < 180) { r = 0; g = c; b = x }
+  else if (h < 240) { r = 0; g = x; b = c }
+  else if (h < 300) { r = x; g = 0; b = c }
+  else { r = c; g = 0; b = x }
+  const to = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, '0').toUpperCase()
+  return `#${to(r)}${to(g)}${to(b)}`
+}
+
+function deriveStrong(hex: string): string {
+  const [h, s] = hexToHsl(hex)
+  return hslToHex(h, Math.min(1, s + 0.1), 0.25)
+}
+
+const VERSION_LABEL: Record<LyricVersion, string> = {
+  original: 'Original',
+  romanized: 'Romanized',
+  translation: 'Translation',
+}
+
+function VersionPicker({
+  value,
+  onChange,
+  disabledValue,
+}: {
+  value: LyricVersion
+  onChange: (v: LyricVersion) => void
+  disabledValue?: LyricVersion
+}) {
+  const versions: LyricVersion[] = ['original', 'romanized', 'translation']
+  return (
+    <div className="flex gap-0.5" style={{ background: '#EBE4FF', borderRadius: 9, padding: 2 }}>
+      {versions.map((v) => {
+        const active = value === v
+        const disabled = disabledValue === v
+        return (
+          <button
+            key={v}
+            onClick={() => !disabled && onChange(v)}
+            disabled={disabled}
+            className="text-[12px]"
+            style={{
+              padding: '4px 12px',
+              borderRadius: 7,
+              background: active ? 'var(--accent)' : 'transparent',
+              color: active ? '#1C0840' : disabled ? '#B5A8D9' : '#7060A0',
+              fontWeight: active ? 700 : 500,
+              cursor: disabled ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {VERSION_LABEL[v]}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -124,12 +218,266 @@ function Slider({
   )
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SectionLabel({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
   return (
     <div
-      className="text-text-2 font-bold uppercase"
+      className="text-text-2 font-bold uppercase flex items-center justify-between gap-2"
       style={{ fontSize: 11, letterSpacing: 1.5, paddingTop: 20, paddingBottom: 10 }}
     >
+      <span>{children}</span>
+      {action}
+    </div>
+  )
+}
+
+function ResetLink({ onClick, label = 'Reset section' }: { onClick: () => void; label?: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className="font-semibold normal-case"
+      style={{ fontSize: 11, letterSpacing: 0, color: '#7060A0' }}
+    >
+      {label}
+    </button>
+  )
+}
+
+function isValidHex(s: string): boolean {
+  return /^#[0-9A-F]{6}$/i.test(s)
+}
+
+function ColorPopover({
+  initial,
+  onSave,
+  onCancel,
+}: {
+  initial: string
+  onSave: (hex: string) => void
+  onCancel: () => void
+}) {
+  const [hex, setHex] = useState(initial.toUpperCase())
+  const [hexInput, setHexInput] = useState(initial.toUpperCase())
+  const [h, s, l] = hexToHsl(hex)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onCancel()
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [onCancel])
+
+  function updateHSL(next: { h?: number; s?: number; l?: number }) {
+    const newHex = hslToHex(next.h ?? h, next.s ?? s, next.l ?? l)
+    setHex(newHex)
+    setHexInput(newHex)
+  }
+
+  return (
+    <div
+      ref={ref}
+      className="absolute z-10"
+      style={{
+        top: '100%',
+        left: 0,
+        marginTop: 8,
+        width: 260,
+        padding: 14,
+        borderRadius: 14,
+        background: '#fff',
+        boxShadow: '0 8px 24px rgba(20, 10, 50, 0.18)',
+        border: '1px solid rgba(100, 60, 180, 0.13)',
+      }}
+    >
+      <div className="flex items-center gap-3 mb-3">
+        <div style={{ width: 36, height: 36, borderRadius: '50%', background: hex, border: '1px solid rgba(100, 60, 180, 0.13)' }} />
+        <div className="flex-1">
+          <input
+            value={hexInput}
+            onChange={(e) => {
+              const v = e.target.value
+              setHexInput(v)
+              if (isValidHex(v)) setHex(v.toUpperCase())
+            }}
+            className="text-[13px] font-mono outline-none w-full"
+            style={{ padding: '6px 10px', borderRadius: 8, background: '#FAFAFE', border: '1px solid rgba(100, 60, 180, 0.13)' }}
+          />
+        </div>
+      </div>
+      <div className="flex flex-col gap-2 mb-3">
+        <div>
+          <div className="text-[11px] font-semibold text-text-2 mb-1">Hue</div>
+          <input
+            type="range" min={0} max={360} value={Math.round(h)}
+            onChange={(e) => updateHSL({ h: Number(e.target.value) })}
+            className="w-full"
+            style={{ background: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)', borderRadius: 4, height: 8, appearance: 'none' }}
+          />
+        </div>
+        <div>
+          <div className="text-[11px] font-semibold text-text-2 mb-1">Saturation</div>
+          <input
+            type="range" min={0} max={100} value={Math.round(s * 100)}
+            onChange={(e) => updateHSL({ s: Number(e.target.value) / 100 })}
+            className="w-full"
+          />
+        </div>
+        <div>
+          <div className="text-[11px] font-semibold text-text-2 mb-1">Lightness</div>
+          <input
+            type="range" min={0} max={100} value={Math.round(l * 100)}
+            onChange={(e) => updateHSL({ l: Number(e.target.value) / 100 })}
+            className="w-full"
+          />
+        </div>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button
+          onClick={onCancel}
+          className="text-[12px] font-semibold"
+          style={{ padding: '6px 12px', borderRadius: 8, background: '#FAFAFE', color: '#7060A0', border: '1px solid rgba(100, 60, 180, 0.13)' }}
+        >
+          Cancel
+        </button>
+        <button
+          onClick={() => isValidHex(hex) && onSave(hex)}
+          className="text-[12px] font-semibold"
+          style={{ padding: '6px 14px', borderRadius: 8, background: 'var(--accent)', color: '#1C0840' }}
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function ColorRow({
+  value,
+  presets,
+  purpose,
+  swatches,
+  onChange,
+  onSwatchesChange,
+  size = 32,
+}: {
+  value: string
+  presets: string[]
+  purpose: SwatchPurpose
+  swatches: CustomSwatches
+  onChange: (hex: string) => void
+  onSwatchesChange: (s: CustomSwatches) => void
+  size?: number
+}) {
+  const [open, setOpen] = useState(false)
+  const [hoveredCustom, setHoveredCustom] = useState<string | null>(null)
+  const norm = value.toUpperCase()
+  const customs = swatches[purpose]
+
+  function isSelected(c: string) {
+    return c.toUpperCase() === norm
+  }
+
+  return (
+    <div className="relative flex items-center gap-2 flex-wrap">
+      {presets.map((c) => (
+        <button
+          key={c}
+          onClick={() => onChange(c.toUpperCase())}
+          aria-label={`Color ${c}`}
+          className="flex-none"
+          style={{
+            width: size, height: size, borderRadius: '50%',
+            background: c,
+            boxShadow: isSelected(c) ? `0 0 0 2px #fff, 0 0 0 3px ${c}` : 'none',
+          }}
+        />
+      ))}
+      {customs.length > 0 && (
+        <span style={{ width: 1, height: size * 0.7, background: 'rgba(100, 60, 180, 0.13)', margin: '0 2px' }} />
+      )}
+      {customs.map((c) => (
+        <div key={c} className="relative" onMouseEnter={() => setHoveredCustom(c)} onMouseLeave={() => setHoveredCustom(null)}>
+          <button
+            onClick={() => onChange(c)}
+            aria-label={`Saved color ${c}`}
+            className="flex-none"
+            style={{
+              width: size, height: size, borderRadius: '50%',
+              background: c,
+              boxShadow: isSelected(c) ? `0 0 0 2px #fff, 0 0 0 3px ${c}` : 'none',
+            }}
+          />
+          {hoveredCustom === c && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onSwatchesChange(removeCustomSwatch(purpose, c))
+                setHoveredCustom(null)
+              }}
+              aria-label="Remove swatch"
+              className="absolute flex items-center justify-center"
+              style={{
+                top: -4, right: -4, width: 14, height: 14, borderRadius: '50%',
+                background: '#1C0840', color: '#fff', fontSize: 10, fontWeight: 700, lineHeight: 1,
+                border: '1px solid #fff',
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
+      ))}
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Custom color"
+        className="flex-none flex items-center justify-center"
+        style={{
+          width: size, height: size, borderRadius: '50%',
+          background: '#FAFAFE',
+          color: '#7060A0',
+          fontSize: size * 0.55,
+          fontWeight: 700,
+          border: '1.5px dashed rgba(100, 60, 180, 0.35)',
+          lineHeight: 1,
+        }}
+      >
+        +
+      </button>
+      {open && (
+        <ColorPopover
+          initial={value}
+          onCancel={() => setOpen(false)}
+          onSave={(hex) => {
+            onChange(hex)
+            onSwatchesChange(addCustomSwatch(purpose, hex))
+            setOpen(false)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function SubCard({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        padding: 14,
+        borderRadius: 12,
+        background: '#FAFAFE',
+        border: '1px solid rgba(100, 60, 180, 0.09)',
+      }}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <span
+          className="text-[11px] font-extrabold uppercase"
+          style={{ letterSpacing: 1.2, color: 'var(--accent-strong)' }}
+        >
+          {title}
+        </span>
+        {action}
+      </div>
       {children}
     </div>
   )
@@ -205,9 +553,11 @@ export default function SettingsScreen({ navigate }: Props) {
   const [theme, setThemeState] = useState(() => getTheme())
   const [lyricSettings, setLyricSettings] = useState<LyricSettings>(() => getLyricSettings())
   const [spotifyToken, setSpotifyToken] = useState(() => getStoredOAuthToken())
+  const [customSwatches, setCustomSwatches] = useState<CustomSwatches>(() => getCustomSwatches())
   const [confirmingClear, setConfirmingClear] = useState(false)
   const [importStatus, setImportStatus] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const avatarInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     applyAccent(theme)
@@ -260,6 +610,75 @@ export default function SettingsScreen({ navigate }: Props) {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
+  function resetAppearance() {
+    if (!window.confirm('Reset Appearance to defaults?')) return
+    setThemeState(DEFAULT_THEME)
+    saveTheme(DEFAULT_THEME)
+    applyAccent(DEFAULT_THEME)
+  }
+  function resetTextStyle() {
+    if (!window.confirm('Reset text style to defaults?')) return
+    updateLyrics({
+      fontSize: DEFAULT_LYRIC_SETTINGS.fontSize,
+      fontColor: DEFAULT_LYRIC_SETTINGS.fontColor,
+      hlColor: DEFAULT_LYRIC_SETTINGS.hlColor,
+      glow: DEFAULT_LYRIC_SETTINGS.glow,
+      bold: DEFAULT_LYRIC_SETTINGS.bold,
+    })
+  }
+  function resetBehavior() {
+    if (!window.confirm('Reset behavior to defaults?')) return
+    updateLyrics({ scrollSpeed: DEFAULT_LYRIC_SETTINGS.scrollSpeed })
+  }
+  function resetVersions() {
+    if (!window.confirm('Reset lyric versions to defaults?')) return
+    updateLyrics({
+      primary: DEFAULT_LYRIC_SETTINGS.primary,
+      paired: DEFAULT_LYRIC_SETTINGS.paired,
+      secondary: DEFAULT_LYRIC_SETTINGS.secondary,
+    })
+  }
+  function resetAll() {
+    if (!window.confirm('Reset all settings (Appearance, Lyric Display, Quick Access) to defaults? Profile and Spotify connection are unaffected.')) return
+    setThemeState(DEFAULT_THEME)
+    saveTheme(DEFAULT_THEME)
+    applyAccent(DEFAULT_THEME)
+    setLyricSettings(DEFAULT_LYRIC_SETTINGS)
+    saveLyricSettings(DEFAULT_LYRIC_SETTINGS)
+  }
+
+  async function handleAvatarPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = () => reject(reader.error)
+        reader.readAsDataURL(file)
+      })
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const i = new Image()
+        i.onload = () => resolve(i)
+        i.onerror = () => reject(new Error('bad image'))
+        i.src = dataUrl
+      })
+      const size = 256
+      const canvas = document.createElement('canvas')
+      canvas.width = size
+      canvas.height = size
+      const ctx = canvas.getContext('2d')!
+      const scale = Math.max(size / img.width, size / img.height)
+      const w = img.width * scale
+      const h = img.height * scale
+      ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h)
+      updateProfile({ image: canvas.toDataURL('image/jpeg', 0.85) })
+    } catch {
+      // ignore — leave existing image
+    }
+    if (avatarInputRef.current) avatarInputRef.current.value = ''
+  }
+
   async function handleClearAll() {
     await db.clearAllSongs()
     setConfirmingClear(false)
@@ -292,23 +711,27 @@ export default function SettingsScreen({ navigate }: Props) {
         <Card>
           <div className="flex items-center gap-4">
             <div
-              className="flex-none flex items-center justify-center text-[20px] font-extrabold"
+              className="flex-none flex items-center justify-center text-[20px] font-extrabold overflow-hidden"
               style={{
                 width: 48,
                 height: 48,
                 borderRadius: '50%',
-                background: 'var(--accent)',
+                background: profile.image ? 'transparent' : 'var(--accent)',
                 color: '#1C0840',
               }}
             >
-              {initial}
+              {profile.image ? (
+                <img src={profile.image} alt="" className="w-full h-full object-cover" />
+              ) : (
+                initial
+              )}
             </div>
-            <div className="flex-1 min-w-0 grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            <div className="flex-1 min-w-0 flex items-center gap-2">
               <input
                 value={profile.name}
                 onChange={(e) => updateProfile({ name: e.target.value })}
                 placeholder="Name"
-                className="text-[15px] font-bold text-text outline-none"
+                className="flex-1 min-w-0 text-[15px] font-bold text-text outline-none"
                 style={{
                   padding: '8px 12px',
                   borderRadius: 10,
@@ -316,18 +739,39 @@ export default function SettingsScreen({ navigate }: Props) {
                   border: '1px solid rgba(100, 60, 180, 0.13)',
                 }}
               />
-              <input
-                value={profile.email}
-                onChange={(e) => updateProfile({ email: e.target.value })}
-                placeholder="Email"
-                type="email"
-                className="text-[13px] text-text-2 outline-none"
+              <button
+                onClick={() => avatarInputRef.current?.click()}
+                className="text-[12px] font-semibold flex-none"
                 style={{
                   padding: '8px 12px',
                   borderRadius: 10,
-                  background: '#FAFAFE',
-                  border: '1px solid rgba(100, 60, 180, 0.13)',
+                  background: 'var(--accent)',
+                  color: '#1C0840',
                 }}
+              >
+                {profile.image ? 'Change' : 'Upload'}
+              </button>
+              {profile.image && (
+                <button
+                  onClick={() => updateProfile({ image: undefined })}
+                  className="text-[12px] font-semibold flex-none"
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: 10,
+                    background: '#FAFAFE',
+                    color: '#7060A0',
+                    border: '1px solid rgba(100, 60, 180, 0.13)',
+                  }}
+                >
+                  Remove
+                </button>
+              )}
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleAvatarPick}
               />
             </div>
           </div>
@@ -336,148 +780,152 @@ export default function SettingsScreen({ navigate }: Props) {
         {/* APPEARANCE */}
         <SectionLabel>Appearance</SectionLabel>
         <Card>
-          <div className="flex items-center gap-2 mb-4">
-            <span style={{ color: 'var(--accent-strong)' }}>
-              <PaletteIcon size={16} color="currentColor" />
-            </span>
-            <div>
-              <div className="text-[15px] font-bold text-text">Accent Color</div>
-              <div className="text-[12px] text-text-2">Pick the brand color used across the app.</div>
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <div className="flex items-center gap-2">
+              <span style={{ color: 'var(--accent-strong)' }}>
+                <PaletteIcon size={16} color="currentColor" />
+              </span>
+              <div>
+                <div className="text-[15px] font-bold text-text">Accent Color</div>
+                <div className="text-[12px] text-text-2">Pick the brand color used across the app.</div>
+              </div>
             </div>
+            <ResetLink onClick={resetAppearance} />
           </div>
-          <div className="flex gap-3 flex-wrap">
-            {ACCENT_SWATCHES.map((s) => {
-              const selected = theme.accentColor.toUpperCase() === s.bg.toUpperCase()
-              return (
-                <button
-                  key={s.id}
-                  onClick={() => pickAccent(s)}
-                  aria-label={`Use ${s.label} accent`}
-                  className="flex-none"
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: '50%',
-                    background: s.bg,
-                    boxShadow: selected
-                      ? `0 0 0 2px #fff, 0 0 0 4px ${s.strong}`
-                      : 'none',
-                  }}
-                />
-              )
-            })}
-          </div>
+          <ColorRow
+            value={theme.accentColor}
+            presets={ACCENT_SWATCHES.map((s) => s.bg)}
+            purpose="accent"
+            swatches={customSwatches}
+            onSwatchesChange={setCustomSwatches}
+            onChange={(hex) => {
+              const preset = ACCENT_SWATCHES.find((s) => s.bg.toUpperCase() === hex.toUpperCase())
+              const next = preset
+                ? { accentColor: preset.bg, accentStrongColor: preset.strong }
+                : { accentColor: hex, accentStrongColor: deriveStrong(hex) }
+              setThemeState(next)
+              saveTheme(next)
+              applyAccent(next)
+            }}
+            size={36}
+          />
         </Card>
 
         {/* LYRIC DISPLAY & IMMERSION */}
         <SectionLabel>Lyric Display &amp; Immersion</SectionLabel>
         <Card>
-          <div className="flex items-center gap-2 mb-4 pb-3" style={{ borderBottom: '1px solid rgba(100, 60, 180, 0.09)' }}>
-            <span
-              className="flex items-center justify-center flex-none font-extrabold"
-              style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(200, 241, 53, 0.18)', color: 'var(--accent-strong)' }}
+          <div className="flex flex-col gap-3">
+            <SubCard
+              title="Text style"
+              action={<ResetLink onClick={resetTextStyle} label="Reset" />}
             >
-              T
-            </span>
-            <div>
-              <div className="text-[15px] font-bold text-text">Lyrics Preferences</div>
-              <div className="text-[12px] text-text-2">Tailor how lyrics appear during your performance.</div>
-            </div>
-          </div>
-
-          {/* Sliders */}
-          <div className="grid gap-6 mb-5" style={{ gridTemplateColumns: '1fr 1fr' }}>
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[13px] font-semibold text-text">Font Size</span>
-                <span className="text-[12px] font-bold" style={{ color: 'var(--accent-strong)' }}>
-                  {lyricSettings.fontSize}px
-                </span>
+              <div className="flex flex-col gap-4">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[13px] font-semibold text-text">Font Size</span>
+                    <span className="text-[12px] font-bold" style={{ color: 'var(--accent-strong)' }}>
+                      {lyricSettings.fontSize}px
+                    </span>
+                  </div>
+                  <Slider
+                    value={lyricSettings.fontSize}
+                    min={14}
+                    max={40}
+                    onChange={(v) => updateLyrics({ fontSize: v })}
+                  />
+                </div>
+                <div>
+                  <div className="text-[13px] font-semibold text-text mb-2">Font Color</div>
+                  <ColorRow
+                    value={lyricSettings.fontColor}
+                    presets={HIGHLIGHT_SWATCHES}
+                    purpose="font"
+                    swatches={customSwatches}
+                    onSwatchesChange={setCustomSwatches}
+                    onChange={(hex) => updateLyrics({ fontColor: hex })}
+                    size={28}
+                  />
+                </div>
+                <div>
+                  <div className="text-[13px] font-semibold text-text mb-2">Highlight</div>
+                  <ColorRow
+                    value={lyricSettings.hlColor}
+                    presets={HIGHLIGHT_SWATCHES}
+                    purpose="hl"
+                    swatches={customSwatches}
+                    onSwatchesChange={setCustomSwatches}
+                    onChange={(hex) => updateLyrics({ hlColor: hex })}
+                    size={28}
+                  />
+                </div>
+                <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[13px] font-semibold text-text">Enable Lyric Glow</span>
+                    <Toggle value={lyricSettings.glow} onChange={(v) => updateLyrics({ glow: v })} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[13px] font-semibold text-text">Always Bold</span>
+                    <Toggle value={lyricSettings.bold} onChange={(v) => updateLyrics({ bold: v })} />
+                  </div>
+                </div>
               </div>
-              <Slider
-                value={lyricSettings.fontSize}
-                min={14}
-                max={40}
-                onChange={(v) => updateLyrics({ fontSize: v })}
-              />
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[13px] font-semibold text-text">Auto-scroll Speed</span>
-                <span className="text-[12px] text-text-2">{scrollSpeedLabel}</span>
-              </div>
-              <Slider
-                value={lyricSettings.scrollSpeed}
-                min={0}
-                max={100}
-                onChange={(v) => updateLyrics({ scrollSpeed: v })}
-              />
-            </div>
-          </div>
+            </SubCard>
 
-          {/* Highlight color + toggles */}
-          <div className="grid gap-6" style={{ gridTemplateColumns: '1fr 1fr' }}>
-            <div>
-              <div className="text-[13px] font-semibold text-text mb-2">Highlight Color</div>
-              <div className="flex gap-2.5">
-                {HIGHLIGHT_SWATCHES.map((c) => {
-                  const selected = lyricSettings.hlColor.toUpperCase() === c.toUpperCase()
-                  return (
-                    <button
-                      key={c}
-                      onClick={() => updateLyrics({ hlColor: c })}
-                      aria-label={`Highlight ${c}`}
-                      className="flex-none"
-                      style={{
-                        width: 32,
-                        height: 32,
-                        borderRadius: '50%',
-                        background: c,
-                        boxShadow: selected ? `0 0 0 2px #fff, 0 0 0 4px ${c}` : 'none',
-                      }}
+            <SubCard
+              title="Behavior"
+              action={<ResetLink onClick={resetBehavior} label="Reset" />}
+            >
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[13px] font-semibold text-text">Auto-scroll Speed</span>
+                  <span className="text-[12px] text-text-2">{scrollSpeedLabel}</span>
+                </div>
+                <Slider
+                  value={lyricSettings.scrollSpeed}
+                  min={0}
+                  max={100}
+                  onChange={(v) => updateLyrics({ scrollSpeed: v })}
+                />
+              </div>
+            </SubCard>
+
+            <SubCard
+              title="Lyric versions"
+              action={<ResetLink onClick={resetVersions} label="Reset" />}
+            >
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[13px] font-semibold text-text">Primary lyric</span>
+                  <VersionPicker
+                    value={lyricSettings.primary}
+                    onChange={(v) => {
+                      const patch: Partial<LyricSettings> = { primary: v }
+                      if (lyricSettings.paired && lyricSettings.secondary === v) {
+                        patch.secondary = (['original', 'romanized', 'translation'] as LyricVersion[]).find((x) => x !== v)!
+                      }
+                      updateLyrics(patch)
+                    }}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[13px] font-semibold text-text">Paired display</span>
+                  <Toggle value={lyricSettings.paired} onChange={(v) => updateLyrics({ paired: v })} />
+                </div>
+                {lyricSettings.paired && (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[13px] font-semibold text-text">Secondary lyric</span>
+                    <VersionPicker
+                      value={lyricSettings.secondary}
+                      onChange={(v) => updateLyrics({ secondary: v })}
+                      disabledValue={lyricSettings.primary}
                     />
-                  )
-                })}
+                  </div>
+                )}
+                <div className="text-[11px] text-text-2" style={{ lineHeight: 1.4 }}>
+                  Primary is the default tab in Playback and the bigger line when paired.
+                </div>
               </div>
-            </div>
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[13px] font-semibold text-text">Enable Lyric Glow</span>
-                <Toggle value={lyricSettings.glow} onChange={(v) => updateLyrics({ glow: v })} />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[13px] font-semibold text-text">Always Bold</span>
-                <Toggle value={lyricSettings.bold} onChange={(v) => updateLyrics({ bold: v })} />
-              </div>
-            </div>
-          </div>
-        </Card>
-
-        {/* Quick Access (lyric version toggles — wired) */}
-        <div style={{ height: 12 }} />
-        <Card>
-          <div className="flex items-center gap-1.5 mb-3">
-            <span style={{ color: 'var(--accent-strong)' }}>⚡</span>
-            <span
-              className="text-[11px] font-extrabold uppercase"
-              style={{ letterSpacing: 1.5, color: 'var(--accent-strong)' }}
-            >
-              Quick Access
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-x-8 gap-y-3">
-            <div className="flex items-center gap-3">
-              <Toggle value={lyricSettings.origLang} onChange={(v) => updateLyrics({ origLang: v })} />
-              <span className="text-[13px] font-semibold text-text">Original Language</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <Toggle value={lyricSettings.romaji} onChange={(v) => updateLyrics({ romaji: v })} />
-              <span className="text-[13px] font-semibold text-text">Romanized Phonetic</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <Toggle value={lyricSettings.translations} onChange={(v) => updateLyrics({ translations: v })} />
-              <span className="text-[13px] font-semibold text-text">Show Translations</span>
-            </div>
+            </SubCard>
           </div>
         </Card>
 
@@ -543,6 +991,23 @@ export default function SettingsScreen({ navigate }: Props) {
             )}
           </div>
         </Card>
+
+        {/* GLOBAL RESET */}
+        <div style={{ paddingTop: 16 }}>
+          <button
+            onClick={resetAll}
+            className="text-[12px] font-semibold"
+            style={{
+              padding: '8px 14px',
+              borderRadius: 10,
+              background: '#FAFAFE',
+              color: '#7060A0',
+              border: '1px solid rgba(100, 60, 180, 0.13)',
+            }}
+          >
+            Reset all settings to defaults
+          </button>
+        </div>
 
         {/* PLATFORM CONTROLS */}
         <SectionLabel>Platform Controls</SectionLabel>
