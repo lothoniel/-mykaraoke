@@ -108,23 +108,28 @@ export function useYouTube(containerId: string, videoId: string | null) {
   }, [containerId, videoId])
 
   function getCurrentTime(): number {
-    return playerRef.current?.getCurrentTime() ?? 0
+    const p = playerRef.current
+    return typeof p?.getCurrentTime === 'function' ? p.getCurrentTime() : 0
   }
 
   function getDuration(): number {
-    return playerRef.current?.getDuration() ?? 0
+    const p = playerRef.current
+    return typeof p?.getDuration === 'function' ? p.getDuration() : 0
   }
 
   function seekTo(seconds: number): void {
-    playerRef.current?.seekTo(Math.max(0, seconds), true)
+    const p = playerRef.current
+    if (typeof p?.seekTo === 'function') p.seekTo(Math.max(0, seconds), true)
   }
 
   function pause(): void {
-    playerRef.current?.pauseVideo()
+    const p = playerRef.current
+    if (typeof p?.pauseVideo === 'function') p.pauseVideo()
   }
 
   function play(): void {
-    playerRef.current?.playVideo()
+    const p = playerRef.current
+    if (typeof p?.playVideo === 'function') p.playVideo()
   }
 
   return { ready, playerState, playerError, getCurrentTime, getDuration, seekTo, pause, play }

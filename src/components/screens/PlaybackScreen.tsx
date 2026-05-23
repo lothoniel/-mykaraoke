@@ -255,7 +255,7 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
       ? (song.timingsRomaji ?? [])
       : lyricsTab === 'translation' && showTranslationTab
         ? (song.timingsTranslation ?? [])
-        : song.timings
+        : (song.timings ?? [])
 
   const sortedTimings = [...activeTimings].sort((a, b) => a.timestamp - b.timestamp)
   const currentLineIdx = findCurrentLineIndex(sortedTimings, displayTime)
