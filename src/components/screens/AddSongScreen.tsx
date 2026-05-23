@@ -5,12 +5,18 @@ import { fetchLyrics, type LrclibResult } from '../../lib/lrclib'
 import { extractVideoId } from '../../lib/youtube'
 import { generateId } from '../../lib/id'
 import { copyTimings } from '../../lib/timing-copy'
+import MarkerConfirmModal from './MarkerConfirmModal'
+import LyricAlignModal from './LyricAlignModal'
 import type { Screen, Timing } from '../../types'
 
+type CopyTarget = 'romaji' | 'translation'
+
 type CopyDialog =
-  | { kind: 'markers'; target: 'romaji' | 'translation'; markers: { index: number; text: string }[] }
-  | { kind: 'mismatch'; target: 'romaji' | 'translation'; originalCount: number; versionCount: number; strip: boolean }
-  | { kind: 'ok'; target: 'romaji' | 'translation'; count: number; partial?: { versionTotal: number; originalTotal: number } }
+  | { kind: 'markers'; target: CopyTarget; markers: { index: number; text: string }[] }
+  | { kind: 'mismatch'; target: CopyTarget; originalCount: number; versionCount: number; strip: boolean | number[] }
+  | { kind: 'ok'; target: CopyTarget; count: number; partial?: { versionTotal: number; originalTotal: number } }
+
+type AlignState = { target: CopyTarget; originalLines: string[]; originalTimings: Timing[]; versionLines: string[] }
 
 type Props = { navigate: (s: Screen) => void }
 type LyricsTab = 'original' | 'romaji' | 'translation'
@@ -112,6 +118,7 @@ export default function AddSongScreen({ navigate }: Props) {
   const [fetchedTimingsRomaji, setFetchedTimingsRomaji] = useState<Timing[] | null>(null)
   const [fetchedTimingsTranslation, setFetchedTimingsTranslation] = useState<Timing[] | null>(null)
   const [copyDialog, setCopyDialog] = useState<CopyDialog | null>(null)
+  const [alignState, setAlignState] = useState<AlignState | null>(null)
 
   const [spotifyTrackId, setSpotifyTrackId] = useState<string | undefined>()
   const [duration, setDuration] = useState<number | undefined>()
@@ -148,22 +155,30 @@ export default function AddSongScreen({ navigate }: Props) {
     }
   }
 
-  function runCopyTimings(target: 'romaji' | 'translation', strip: boolean | null, partial = false) {
+  function runCopyTimings(
+    target: CopyTarget,
+    strip: boolean | number[] | null,
+    partial = false,
+    overrideVersionLines?: string[],
+  ) {
     if (!fetchedTimings || fetchedTimings.length === 0) return
     const originalLines = lyricsText.split('\n').map((l) => l.trim()).filter(Boolean)
     const versionText = target === 'romaji' ? lyricsRomajiText : lyricsTranslationText
-    const versionLines = versionText.split('\n').map((l) => l.trim()).filter(Boolean)
+    const versionLines =
+      overrideVersionLines ?? versionText.split('\n').map((l) => l.trim()).filter(Boolean)
     if (versionLines.length === 0 || originalLines.length === 0) return
 
     const result = copyTimings(originalLines, fetchedTimings, versionLines, strip, partial ? 'partial' : 'strict')
     if (result.kind === 'ok') {
-      if (result.strippedLyrics) {
-        const joined = result.strippedLyrics.join('\n')
+      const finalVersionLines = result.strippedLyrics ?? versionLines
+      if (result.strippedLyrics != null || overrideVersionLines != null) {
+        const joined = finalVersionLines.join('\n')
         if (target === 'romaji') setLyricsRomajiText(joined)
         else setLyricsTranslationText(joined)
       }
       if (target === 'romaji') setFetchedTimingsRomaji(result.timings)
       else setFetchedTimingsTranslation(result.timings)
+      setAlignState(null)
       setCopyDialog({
         kind: 'ok',
         target,
@@ -183,8 +198,16 @@ export default function AddSongScreen({ navigate }: Props) {
       target,
       originalCount: result.originalCount,
       versionCount: result.versionCount,
-      strip: strip === true,
+      strip: Array.isArray(strip) ? strip : strip === true,
     })
+  }
+
+  function openAlignModal(target: CopyTarget) {
+    if (!fetchedTimings) return
+    const originalLines = lyricsText.split('\n').map((l) => l.trim()).filter(Boolean)
+    const versionText = target === 'romaji' ? lyricsRomajiText : lyricsTranslationText
+    const versionLines = versionText.split('\n').map((l) => l.trim()).filter(Boolean)
+    setAlignState({ target, originalLines, originalTimings: fetchedTimings, versionLines })
   }
 
   function applyResult(result: LrclibResult) {
@@ -664,54 +687,25 @@ export default function AddSongScreen({ navigate }: Props) {
                 border: `1px solid ${copyDialog.kind === 'mismatch' ? 'rgba(239, 68, 68, 0.30)' : 'rgba(100, 60, 180, 0.13)'}`,
               }}
             >
-              {copyDialog.kind === 'markers' && (
-                <>
-                  <div className="text-[12px] text-text mb-2">
-                    Found {copyDialog.markers.length} section marker{copyDialog.markers.length === 1 ? '' : 's'} in{' '}
-                    {copyDialog.target === 'romaji' ? 'Romanized' : 'Translation'}:{' '}
-                    <span className="font-mono text-text-2">
-                      {copyDialog.markers.slice(0, 4).map((m) => m.text).join(', ')}
-                      {copyDialog.markers.length > 4 ? '…' : ''}
-                    </span>
-                    . Strip them so line counts match?
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => runCopyTimings(copyDialog.target, true)}
-                      className="text-[12px] font-bold"
-                      style={{ padding: '4px 12px', borderRadius: 7, background: 'var(--accent)', color: '#1C0840' }}
-                    >
-                      Yes, strip & copy
-                    </button>
-                    <button
-                      onClick={() => runCopyTimings(copyDialog.target, false)}
-                      className="text-[12px] font-semibold text-text-2 underline"
-                      style={{ textUnderlineOffset: 3 }}
-                    >
-                      No, keep them
-                    </button>
-                    <button
-                      onClick={() => setCopyDialog(null)}
-                      className="text-[12px] font-semibold text-text-2 underline ml-auto"
-                      style={{ textUnderlineOffset: 3 }}
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                </>
-              )}
               {copyDialog.kind === 'mismatch' && (
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <span className="text-[12px] text-danger">
-                    Line counts don't match — Original: {copyDialog.originalCount}, {copyDialog.target === 'romaji' ? 'Romanized' : 'Translation'}: {copyDialog.versionCount}. Edit lyrics first, or copy what fits.
+                    Line counts don't match — Original: {copyDialog.originalCount}, {copyDialog.target === 'romaji' ? 'Romanized' : 'Translation'}: {copyDialog.versionCount}.
                   </span>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => runCopyTimings(copyDialog.target, copyDialog.strip, true)}
+                      onClick={() => openAlignModal(copyDialog.target)}
                       className="text-[12px] font-bold"
                       style={{ padding: '4px 12px', borderRadius: 7, background: 'var(--accent)', color: '#1C0840' }}
                     >
-                      Copy what fits ({Math.min(copyDialog.originalCount, copyDialog.versionCount)} lines)
+                      Align side-by-side
+                    </button>
+                    <button
+                      onClick={() => runCopyTimings(copyDialog.target, copyDialog.strip, true)}
+                      className="text-[12px] font-semibold text-text-2 underline"
+                      style={{ textUnderlineOffset: 3 }}
+                    >
+                      Copy what fits ({Math.min(copyDialog.originalCount, copyDialog.versionCount)})
                     </button>
                     <button
                       onClick={() => setCopyDialog(null)}
@@ -792,6 +786,25 @@ export default function AddSongScreen({ navigate }: Props) {
         </div>
       </div>
 
+      {copyDialog?.kind === 'markers' && (
+        <MarkerConfirmModal
+          markers={copyDialog.markers}
+          versionLabel={copyDialog.target === 'romaji' ? 'Romanized' : 'Translation'}
+          onCancel={() => setCopyDialog(null)}
+          onConfirm={(indices) => runCopyTimings(copyDialog.target, indices)}
+        />
+      )}
+
+      {alignState && (
+        <LyricAlignModal
+          originalLines={alignState.originalLines}
+          originalTimings={alignState.originalTimings}
+          versionLines={alignState.versionLines}
+          versionLabel={alignState.target === 'romaji' ? 'Romanized' : 'Translation'}
+          onCancel={() => setAlignState(null)}
+          onApply={(aligned) => runCopyTimings(alignState.target, false, false, aligned)}
+        />
+      )}
     </div>
   )
 }
