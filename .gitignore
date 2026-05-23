@@ -3,3 +3,4 @@ dist
 .env.local
 *.local
 design_handoff_mykaraoke/
+.claude/
