@@ -26,7 +26,7 @@ export function copyTimings(
   originalLyrics: string[],
   originalTimings: Timing[],
   versionLyrics: string[],
-  strip: boolean | null,
+  strip: boolean | number[] | null,
   mode: 'strict' | 'partial' = 'strict',
 ): CopyTimingsResult {
   const markers = findMarkerLines(versionLyrics)
@@ -40,10 +40,13 @@ export function copyTimings(
     }
   }
 
-  const effectiveLyrics =
+  const stripIndices: Set<number> =
     strip === true
-      ? versionLyrics.filter((_, i) => !markers.some((m) => m.index === i))
-      : versionLyrics
+      ? new Set(markers.map((m) => m.index))
+      : Array.isArray(strip)
+      ? new Set(strip)
+      : new Set()
+  const effectiveLyrics = versionLyrics.filter((_, i) => !stripIndices.has(i))
 
   if (mode === 'strict' && effectiveLyrics.length !== originalLyrics.length) {
     return {
@@ -62,7 +65,7 @@ export function copyTimings(
   return {
     kind: 'ok',
     timings: copied,
-    strippedLyrics: strip === true ? effectiveLyrics : null,
+    strippedLyrics: stripIndices.size > 0 ? effectiveLyrics : null,
     ...(isPartial && {
       partial: {
         covered: copied.length,
