@@ -33,7 +33,6 @@ export type Screen =
   | { name: 'timing'; songId: string; version?: 'original' | 'romaji' | 'translation' }
   | { name: 'playback'; songId: string }
   | { name: 'edit'; songId: string }
-  | { name: 'search' }
   | { name: 'settings' }
   | { name: 'import' }
 

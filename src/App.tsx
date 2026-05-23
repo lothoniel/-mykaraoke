@@ -7,7 +7,6 @@ import AddSongScreen from './components/screens/AddSongScreen'
 import TimingScreen from './components/screens/TimingScreen'
 import PlaybackScreen from './components/screens/PlaybackScreen'
 import EditScreen from './components/screens/EditScreen'
-import SearchScreen from './components/screens/SearchScreen'
 import SettingsScreen from './components/screens/SettingsScreen'
 import ImportScreen from './components/screens/ImportScreen'
 import { exchangeCodeForToken } from './lib/spotify'
@@ -59,8 +58,6 @@ export default function App() {
         return <PlaybackScreen songId={screen.songId} navigate={navigate} goBack={goBack} />
       case 'edit':
         return <EditScreen songId={screen.songId} navigate={navigate} goBack={goBack} />
-      case 'search':
-        return <SearchScreen navigate={navigate} />
       case 'settings':
         return <SettingsScreen navigate={navigate} />
       case 'import':

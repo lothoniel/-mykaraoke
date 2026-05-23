@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as db from '../../hooks/useDB'
 import type { Screen, Song } from '../../types'
+import SpotifyBrowsePanel from './SpotifyBrowsePanel'
 
 type Props = { navigate: (s: Screen) => void }
+type Mode = 'library' | 'spotify'
 type Tab = 'all' | 'fav' | 'spotify'
 type SortKey = 'title' | 'artist' | 'show' | 'recent'
 
@@ -67,6 +69,24 @@ function SpotifyIcon({ size = 13, color = 'currentColor' }: { size?: number; col
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} {...strokeAttrs}>
       <circle cx="12" cy="12" r="10" />
       <path d="M8 11.5c2.5-1 5.5-1 8 0M7 15c3-1.5 7-1.5 10 0M9 8.5c2-0.5 5-0.5 7 0" />
+    </svg>
+  )
+}
+
+function SearchIcon({ size = 16, color = 'currentColor' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...strokeAttrs} fill="none" stroke={color}>
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  )
+}
+
+function XIcon({ size = 12, color = 'currentColor' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...strokeAttrs} fill="none" stroke={color}>
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
     </svg>
   )
 }
@@ -171,9 +191,12 @@ function SongRow({
 
 export default function LibraryScreen({ navigate }: Props) {
   const [songs, setSongs] = useState<Song[]>([])
+  const [mode, setMode] = useState<Mode>('library')
+  const [query, setQuery] = useState('')
   const [tab, setTab] = useState<Tab>('all')
   const [sort, setSort] = useState<SortKey>('recent')
   const [descending, setDescending] = useState(true)
+  const [searchFocused, setSearchFocused] = useState(false)
 
   useEffect(() => {
     db.getAllSongs().then(setSongs)
@@ -185,11 +208,22 @@ export default function LibraryScreen({ navigate }: Props) {
     return [...songs].sort((a, b) => compareSongs(a, b, sort, !descending))
   }, [songs, sort, descending])
 
-  const filtered = useMemo(() => {
+  const tabFiltered = useMemo(() => {
     if (tab === 'fav') return sorted.filter((s) => s.isFavorite)
     if (tab === 'spotify') return sorted.filter((s) => !!s.spotifyTrackId)
     return sorted
   }, [sorted, tab])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return tabFiltered
+    return tabFiltered.filter((s) => {
+      const t = s.title.toLowerCase()
+      const a = s.artist.toLowerCase()
+      const show = getShow(s).toLowerCase()
+      return t.includes(q) || a.includes(q) || show.includes(q)
+    })
+  }, [tabFiltered, query])
 
   const groupedBySpotifyShow = useMemo(() => {
     if (tab !== 'spotify') return null
@@ -202,6 +236,8 @@ export default function LibraryScreen({ navigate }: Props) {
     }
     return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))
   }, [filtered, tab])
+
+  const hasQuery = query.trim().length > 0
 
   return (
     <div className="flex flex-col h-full bg-bg overflow-hidden">
@@ -217,14 +253,16 @@ export default function LibraryScreen({ navigate }: Props) {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-none">
-          <button
-            onClick={() => setDescending((d) => !d)}
-            aria-label={descending ? 'Sort descending' : 'Sort ascending'}
-            className="flex items-center justify-center bg-surface border border-border text-text-2 hover:bg-white"
-            style={{ width: 36, height: 36, borderRadius: 9 }}
-          >
-            <SortIcon size={16} descending={descending} />
-          </button>
+          {mode === 'library' && (
+            <button
+              onClick={() => setDescending((d) => !d)}
+              aria-label={descending ? 'Sort descending' : 'Sort ascending'}
+              className="flex items-center justify-center bg-surface border border-border text-text-2 hover:bg-white"
+              style={{ width: 36, height: 36, borderRadius: 9 }}
+            >
+              <SortIcon size={16} descending={descending} />
+            </button>
+          )}
           <button
             onClick={() => navigate({ name: 'add' })}
             className="flex items-center gap-1.5 px-3 py-2 rounded-[9px] text-[13px] font-bold"
@@ -237,137 +275,253 @@ export default function LibraryScreen({ navigate }: Props) {
       </div>
 
       <div className="flex-1 px-6 pb-6 flex flex-col gap-3 overflow-hidden">
-        {/* Segmented tabs */}
+        {/* Search input */}
+        <div className="relative flex-none">
+          <span
+            className="absolute left-[14px] top-1/2 text-text-2 pointer-events-none"
+            style={{ transform: 'translateY(-50%)' }}
+          >
+            <SearchIcon size={16} color="#7060A0" />
+          </span>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setSearchFocused(false)}
+            placeholder={
+              mode === 'library'
+                ? 'Search your library…'
+                : 'Search your Spotify…'
+            }
+            className="w-full text-[14px] text-text outline-none"
+            style={{
+              padding: '12px 40px 12px 42px',
+              borderRadius: 12,
+              background: '#FFFFFF',
+              border: `2px solid ${searchFocused || hasQuery ? 'var(--accent)' : 'rgba(100, 60, 180, 0.09)'}`,
+              boxShadow: searchFocused || hasQuery ? '0 0 0 4px rgba(200, 241, 53, 0.18)' : 'none',
+              transition: 'border-color 120ms, box-shadow 120ms',
+            }}
+          />
+          {hasQuery && (
+            <button
+              onClick={() => setQuery('')}
+              aria-label="Clear search"
+              className="absolute right-[14px] top-1/2 flex items-center justify-center"
+              style={{
+                transform: 'translateY(-50%)',
+                width: 20,
+                height: 20,
+                borderRadius: '50%',
+                background: '#EBE4FF',
+              }}
+            >
+              <XIcon size={11} color="#7060A0" />
+            </button>
+          )}
+        </div>
+
+        {/* Mode toggle */}
         <div
           className="flex flex-none"
           style={{ background: '#EBE4FF', borderRadius: 12, padding: 4, gap: 0 }}
         >
-          {TABS.map((tb) => {
-            const active = tab === tb.id
-            return (
-              <button
-                key={tb.id}
-                onClick={() => setTab(tb.id)}
-                className="flex-1 flex items-center justify-center gap-1.5 text-[13px]"
-                style={{
-                  padding: '7px',
-                  borderRadius: 9,
-                  background: active ? '#fff' : 'transparent',
-                  color: active ? '#1C0840' : '#7060A0',
-                  fontWeight: active ? 700 : 500,
-                  boxShadow: active ? '0 1px 4px rgba(0,0,0,0.09)' : 'none',
-                }}
-              >
-                {tb.id === 'spotify' && (
-                  <SpotifyIcon size={13} color={active ? '#16A34A' : '#7060A0'} />
-                )}
-                {tb.label}
-              </button>
-            )
-          })}
+          <button
+            onClick={() => setMode('library')}
+            className="flex-1 flex items-center justify-center gap-1.5 text-[13px]"
+            style={{
+              padding: '7px',
+              borderRadius: 9,
+              background: mode === 'library' ? '#fff' : 'transparent',
+              color: mode === 'library' ? '#1C0840' : '#7060A0',
+              fontWeight: mode === 'library' ? 700 : 500,
+              boxShadow: mode === 'library' ? '0 1px 4px rgba(0,0,0,0.09)' : 'none',
+            }}
+          >
+            In your library
+          </button>
+          <button
+            onClick={() => setMode('spotify')}
+            className="flex-1 flex items-center justify-center gap-1.5 text-[13px]"
+            style={{
+              padding: '7px',
+              borderRadius: 9,
+              background: mode === 'spotify' ? '#fff' : 'transparent',
+              color: mode === 'spotify' ? '#1C0840' : '#7060A0',
+              fontWeight: mode === 'spotify' ? 700 : 500,
+              boxShadow: mode === 'spotify' ? '0 1px 4px rgba(0,0,0,0.09)' : 'none',
+            }}
+          >
+            <SpotifyIcon size={13} color={mode === 'spotify' ? '#16A34A' : '#7060A0'} />
+            Find on Spotify
+          </button>
         </div>
 
-        {/* Sort bar */}
-        <div className="flex items-center gap-1.5 flex-none flex-wrap">
-          <span className="text-[12px] text-text-2">Sort by:</span>
-          {SORTS.map((s) => {
-            const active = sort === s.id
-            return (
-              <button
-                key={s.id}
-                onClick={() => setSort(s.id)}
-                className="text-[12px]"
-                style={{
-                  padding: '4px 10px',
-                  borderRadius: 8,
-                  fontWeight: active ? 700 : 400,
-                  background: active ? 'rgba(200, 241, 53, 0.18)' : 'transparent',
-                  color: active ? 'var(--accent-strong)' : '#7060A0',
-                  border: active ? '1px solid rgba(200, 241, 53, 0.45)' : '1px solid transparent',
-                }}
-              >
-                {s.label}
-              </button>
-            )
-          })}
-        </div>
-
-        {/* List */}
-        <div className="flex-1 overflow-y-auto flex flex-col gap-0.5">
-          {songs.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-center text-text-2 py-10">
-              <div className="text-4xl mb-3">🎵</div>
-              <p className="text-[15px] font-bold text-text mb-1">No songs yet</p>
-              <p className="text-[13px] mb-5">Start by adding your first song.</p>
-              <button
-                onClick={() => navigate({ name: 'add' })}
-                className="flex items-center gap-1.5 text-[13px] font-bold"
-                style={{
-                  padding: '9px 18px',
-                  borderRadius: 9,
-                  background: 'var(--accent)',
-                  color: '#1C0840',
-                }}
-              >
-                <PlusIcon size={14} />
-                Add a Song
-              </button>
+        {/* Library mode body */}
+        {mode === 'library' ? (
+          <>
+            {/* Filter chips */}
+            <div className="flex gap-1.5 flex-none flex-wrap">
+              {TABS.map((tb) => {
+                const active = tab === tb.id
+                return (
+                  <button
+                    key={tb.id}
+                    onClick={() => setTab(tb.id)}
+                    className="text-[13px] flex items-center gap-1.5"
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: 20,
+                      fontWeight: active ? 700 : 500,
+                      background: active ? 'var(--accent)' : '#FFFFFF',
+                      color: active ? '#1C0840' : '#7060A0',
+                      border: active ? 'none' : '1px solid rgba(100, 60, 180, 0.09)',
+                    }}
+                  >
+                    {tb.id === 'spotify' && (
+                      <SpotifyIcon size={13} color={active ? '#16A34A' : '#7060A0'} />
+                    )}
+                    {tb.label}
+                  </button>
+                )
+              })}
             </div>
-          ) : tab === 'spotify' ? (
-            <>
-              {filtered.length === 0 ? (
+
+            {/* Sort bar */}
+            <div className="flex items-center gap-1.5 flex-none flex-wrap">
+              <span className="text-[12px] text-text-2">Sort by:</span>
+              {SORTS.map((s) => {
+                const active = sort === s.id
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setSort(s.id)}
+                    className="text-[12px]"
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: 8,
+                      fontWeight: active ? 700 : 400,
+                      background: active ? 'rgba(200, 241, 53, 0.18)' : 'transparent',
+                      color: active ? 'var(--accent-strong)' : '#7060A0',
+                      border: active ? '1px solid rgba(200, 241, 53, 0.45)' : '1px solid transparent',
+                    }}
+                  >
+                    {s.label}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* List */}
+            <div className="flex-1 overflow-y-auto flex flex-col gap-0.5">
+              {songs.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-center text-text-2 py-10">
-                  <SpotifyIcon size={32} color="#7060A0" />
-                  <p className="text-[15px] font-bold text-text mb-1 mt-3">No Spotify songs yet</p>
-                  <p className="text-[13px] mb-5">Import songs from your Spotify library to see them here.</p>
+                  <div className="text-4xl mb-3">🎵</div>
+                  <p className="text-[15px] font-bold text-text mb-1">No songs yet</p>
+                  <p className="text-[13px] mb-5">Start by adding your first song.</p>
+                  <button
+                    onClick={() => navigate({ name: 'add' })}
+                    className="flex items-center gap-1.5 text-[13px] font-bold"
+                    style={{
+                      padding: '9px 18px',
+                      borderRadius: 9,
+                      background: 'var(--accent)',
+                      color: '#1C0840',
+                    }}
+                  >
+                    <PlusIcon size={14} />
+                    Add a Song
+                  </button>
+                </div>
+              ) : tab === 'spotify' && !hasQuery ? (
+                <>
+                  {filtered.length === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center text-center text-text-2 py-10">
+                      <SpotifyIcon size={32} color="#7060A0" />
+                      <p className="text-[15px] font-bold text-text mb-1 mt-3">No Spotify songs yet</p>
+                      <p className="text-[13px] mb-5">Import songs from your Spotify library to see them here.</p>
+                    </div>
+                  ) : (
+                    groupedBySpotifyShow!.map(([show, items], gi) => (
+                      <div key={show}>
+                        <div
+                          className="text-[11px] font-bold uppercase text-text-2"
+                          style={{ letterSpacing: 1.2, padding: '8px 10px 4px' }}
+                        >
+                          {show}
+                        </div>
+                        {items.map((song, i) => (
+                          <SongRow
+                            key={song.id}
+                            song={song}
+                            index={i}
+                            highlight={gi === 0 && i === 0}
+                            onPlay={() => navigate({ name: 'playback', songId: song.id })}
+                          />
+                        ))}
+                      </div>
+                    ))
+                  )}
+                  <div className="pt-3 flex justify-center">
+                    <button
+                      onClick={() => navigate({ name: 'import' })}
+                      className="text-[13px] font-semibold underline"
+                      style={{ color: 'var(--accent-strong)', textUnderlineOffset: 3 }}
+                    >
+                      Browse more from Spotify →
+                    </button>
+                  </div>
+                </>
+              ) : filtered.length === 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-center text-text-2 py-10 gap-2">
+                  <p className="text-[13px]">
+                    {hasQuery
+                      ? 'Nothing in your library matches.'
+                      : tab === 'fav'
+                        ? 'No favorites yet — tap the heart on a song to add it here.'
+                        : 'No songs.'}
+                  </p>
+                  {hasQuery && (
+                    <button
+                      onClick={() => setMode('spotify')}
+                      className="text-[13px] font-semibold underline"
+                      style={{ color: 'var(--accent-strong)', textUnderlineOffset: 3 }}
+                    >
+                      Try Find on Spotify →
+                    </button>
+                  )}
                 </div>
               ) : (
-                groupedBySpotifyShow!.map(([show, items], gi) => (
-                  <div key={show}>
-                    <div
-                      className="text-[11px] font-bold uppercase text-text-2"
-                      style={{ letterSpacing: 1.2, padding: '8px 10px 4px' }}
-                    >
-                      {show}
+                <>
+                  {hasQuery && (
+                    <div className="text-[13px] text-text-2 flex-none mb-1">
+                      <span className="text-text font-bold">
+                        {filtered.length} result{filtered.length === 1 ? '' : 's'}
+                      </span>{' '}
+                      for &ldquo;{query.trim()}&rdquo;
                     </div>
-                    {items.map((song, i) => (
-                      <SongRow
-                        key={song.id}
-                        song={song}
-                        index={i}
-                        highlight={gi === 0 && i === 0}
-                        onPlay={() => navigate({ name: 'playback', songId: song.id })}
-                      />
-                    ))}
-                  </div>
-                ))
+                  )}
+                  {filtered.map((song, i) => (
+                    <SongRow
+                      key={song.id}
+                      song={song}
+                      index={i}
+                      highlight={i === 0}
+                      onPlay={() => navigate({ name: 'playback', songId: song.id })}
+                    />
+                  ))}
+                </>
               )}
-              <div className="pt-3 flex justify-center">
-                <button
-                  onClick={() => navigate({ name: 'import' })}
-                  className="text-[13px] font-semibold underline"
-                  style={{ color: 'var(--accent-strong)', textUnderlineOffset: 3 }}
-                >
-                  Browse more from Spotify →
-                </button>
-              </div>
-            </>
-          ) : filtered.length === 0 ? (
-            <div className="text-center py-10 text-text-2 text-[13px]">
-              {tab === 'fav' ? 'No favorites yet — tap the heart on a song to add it here.' : 'No songs.'}
             </div>
-          ) : (
-            filtered.map((song, i) => (
-              <SongRow
-                key={song.id}
-                song={song}
-                index={i}
-                highlight={i === 0}
-                onPlay={() => navigate({ name: 'playback', songId: song.id })}
-              />
-            ))
-          )}
-        </div>
+          </>
+        ) : (
+          <SpotifyBrowsePanel
+            query={query}
+            allSongs={songs}
+            onSongAdded={(s) => setSongs((prev) => [s, ...prev])}
+          />
+        )}
       </div>
     </div>
   )

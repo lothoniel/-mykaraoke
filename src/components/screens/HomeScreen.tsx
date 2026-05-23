@@ -179,7 +179,7 @@ export default function HomeScreen({ navigate }: Props) {
         </div>
         <div className="flex items-center gap-2 flex-none">
           <button
-            onClick={() => navigate({ name: 'search' })}
+            onClick={() => navigate({ name: 'library' })}
             className="flex items-center gap-1.5 px-3 py-2 rounded-[9px] bg-surface border border-border text-text-2 text-[13px] font-semibold hover:bg-white"
           >
             <SearchIcon size={14} />
