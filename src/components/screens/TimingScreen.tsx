@@ -68,6 +68,9 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
 
   const [song, setSong] = useState<Song | null>(null)
   const [timings, setTimings] = useState<Timing[]>([])
+  const [savedTimings, setSavedTimings] = useState<Timing[]>([])
+  const [pendingShift, setPendingShift] = useState<{ lineIndex: number; delta: number } | null>(null)
+  const [leaveGuard, setLeaveGuard] = useState<Screen | null>(null)
   const [confirmReset, setConfirmReset] = useState(false)
   const [confirmDeleteIdx, setConfirmDeleteIdx] = useState<number | null>(null)
   const [selectedLine, setSelectedLine] = useState<number | null>(null)
@@ -95,8 +98,17 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
         : activeVersion === 'translation' ? (s.timingsTranslation ?? [])
         : (s.timings ?? [])
       setTimings(t)
+      setSavedTimings(t)
+      setPendingShift(null)
     })
   }, [songId, activeVersion])
+
+  const isDirty =
+    timings.length !== savedTimings.length ||
+    timings.some((t, i) => {
+      const saved = savedTimings[i]
+      return !saved || saved.lineIndex !== t.lineIndex || saved.timestamp !== t.timestamp
+    })
 
   useEffect(() => {
     if (playerState === 'playing') {
@@ -134,9 +146,14 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
     currentRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [nextToMark])
 
-  function updateTimings(next: Timing[]) {
+  function commitTimings(next: Timing[]) {
     setTimings(next)
+    setSavedTimings(next)
     db.updateTimings(songId, next, activeVersion)
+  }
+
+  function applyLocal(next: Timing[]) {
+    setTimings(next)
   }
 
   function handleAdjust(lineIndex: number, delta: number) {
@@ -145,10 +162,33 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
         ? { ...t, timestamp: Math.max(0, +(t.timestamp + delta).toFixed(1)) }
         : t,
     )
-    updateTimings(next)
+    applyLocal(next)
+    setPendingShift({ lineIndex, delta })
     setPressedAdjust({ line: lineIndex, delta })
     if (pressedTimerRef.current) clearTimeout(pressedTimerRef.current)
     pressedTimerRef.current = setTimeout(() => setPressedAdjust(null), 350)
+  }
+
+  function handleApplyShift() {
+    if (!pendingShift) return
+    const { lineIndex, delta } = pendingShift
+    const next = timings.map((t) =>
+      t.lineIndex > lineIndex
+        ? { ...t, timestamp: Math.max(0, +(t.timestamp + delta).toFixed(1)) }
+        : t,
+    )
+    applyLocal(next)
+    setPendingShift(null)
+  }
+
+  function handleSave() {
+    commitTimings(timings)
+    setPendingShift(null)
+  }
+
+  function handleDiscard() {
+    setTimings(savedTimings)
+    setPendingShift(null)
   }
 
   useEffect(() => () => {
@@ -158,7 +198,8 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
   function handleRemark(lineIndex: number) {
     const ts = getCurrentTime()
     const next = timings.map((t) => (t.lineIndex === lineIndex ? { ...t, timestamp: ts } : t))
-    updateTimings(next)
+    applyLocal(next)
+    setPendingShift(null)
     setSelectedLine(null)
   }
 
@@ -190,20 +231,22 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
       existing >= 0
         ? timings.map((t, i) => (i === existing ? { ...t, timestamp: ts } : t))
         : [...timings, { lineIndex: nextToMark, timestamp: ts }]
-    updateTimings(next)
+    commitTimings(next)
   }
 
   function handleUndo() {
     if (timings.length === 0) return
-    updateTimings(timings.slice(0, -1))
+    commitTimings(timings.slice(0, -1))
   }
 
   function handleRemove(lineIndex: number) {
-    updateTimings(timings.filter((t) => t.lineIndex !== lineIndex))
+    applyLocal(timings.filter((t) => t.lineIndex !== lineIndex))
+    if (pendingShift?.lineIndex === lineIndex) setPendingShift(null)
   }
 
   function handleReset() {
-    updateTimings([])
+    applyLocal([])
+    setPendingShift(null)
     setConfirmReset(false)
   }
 
@@ -247,6 +290,8 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
     await db.updateSong(songId, { [lyricsField]: newLyrics, [timingsField]: newTimings })
     setSong((s) => (s ? { ...s, [lyricsField]: newLyrics, [timingsField]: newTimings } : s))
     setTimings(newTimings)
+    setSavedTimings(newTimings)
+    setPendingShift(null)
     setSelectedForDelete(new Set())
     setSelectMode(false)
     setConfirmBulkDelete(false)
@@ -269,6 +314,8 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
     await db.updateSong(songId, { [lyricsField]: newLyrics, [timingsField]: newTimings })
     setSong((s) => (s ? { ...s, [lyricsField]: newLyrics, [timingsField]: newTimings } : s))
     setTimings(newTimings)
+    setSavedTimings(newTimings)
+    setPendingShift(null)
     setConfirmDeleteIdx(null)
     if (selectedLine === index) setSelectedLine(null)
     if (editingLine === index) setEditingLine(null)
@@ -414,17 +461,42 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
             </button>
           </div>
 
+          {/* Save / Discard (when dirty) */}
+          {isDirty && (
+            <div className="flex gap-2 flex-none">
+              <button
+                onClick={handleSave}
+                className="flex-1 text-[13px] font-bold"
+                style={{ padding: 11, borderRadius: 10, background: 'var(--accent)', color: '#1C0840' }}
+              >
+                Save changes
+              </button>
+              <button
+                onClick={handleDiscard}
+                className="text-[13px] font-semibold text-text"
+                style={{
+                  padding: '11px 16px',
+                  borderRadius: 10,
+                  background: '#FFFFFF',
+                  border: '1px solid rgba(100, 60, 180, 0.09)',
+                }}
+              >
+                Discard
+              </button>
+            </div>
+          )}
+
           {/* Done + Back */}
           <div className="flex gap-2 flex-none">
             <button
-              onClick={() => navigate({ name: 'playback', songId })}
+              onClick={() => (isDirty ? setLeaveGuard({ name: 'playback', songId }) : navigate({ name: 'playback', songId }))}
               className="flex-1 text-[14px] font-extrabold"
               style={{ padding: 12, borderRadius: 10, background: 'var(--accent)', color: '#1C0840' }}
             >
               Done: Play
             </button>
             <button
-              onClick={() => navigate({ name: 'edit', songId })}
+              onClick={() => (isDirty ? setLeaveGuard({ name: 'edit', songId }) : navigate({ name: 'edit', songId }))}
               className="flex items-center gap-1.5 text-[13px] font-semibold text-text"
               style={{
                 padding: '12px 16px',
@@ -733,11 +805,100 @@ export default function TimingScreen({ songId, navigate, version }: Props) {
                     </button>
                   </div>
                 )}
+
+                {/* Cascade-shift prompt */}
+                {pendingShift?.lineIndex === i && timings.some((t) => t.lineIndex > i) && (
+                  <div
+                    className="flex items-center gap-2 flex-wrap"
+                    style={{
+                      margin: '0 20px 12px',
+                      padding: '8px 12px',
+                      borderRadius: 8,
+                      background: 'rgba(200, 241, 53, 0.10)',
+                      border: '1px solid rgba(200, 241, 53, 0.35)',
+                    }}
+                  >
+                    <span className="text-[11px] text-text">
+                      Shift L{i + 2} → end by{' '}
+                      <span className="font-bold tabular-nums">
+                        {pendingShift.delta > 0 ? '+' : ''}
+                        {pendingShift.delta}s
+                      </span>{' '}
+                      too?
+                    </span>
+                    <div className="flex items-center gap-1.5 ml-auto">
+                      <button
+                        onClick={handleApplyShift}
+                        className="text-[11px] font-bold"
+                        style={{ padding: '3px 10px', borderRadius: 6, background: 'var(--accent)', color: '#1C0840' }}
+                      >
+                        Yes, shift
+                      </button>
+                      <button
+                        onClick={() => setPendingShift(null)}
+                        className="text-[11px] font-semibold text-text-2 underline"
+                        style={{ textUnderlineOffset: 3 }}
+                      >
+                        No
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )
           })}
         </div>
       </div>
+
+      {leaveGuard && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setLeaveGuard(null)} aria-hidden />
+          <div className="relative z-10 bg-bg rounded-2xl border border-border w-full max-w-sm p-5">
+            <h2 className="text-[15px] font-extrabold text-text">Unsaved timing changes</h2>
+            <p className="text-[12px] text-text-2 mt-1">
+              You have edits that haven't been saved. Save before leaving?
+            </p>
+            <div className="flex items-center justify-end gap-2 mt-4 flex-wrap">
+              <button
+                onClick={() => setLeaveGuard(null)}
+                className="text-[12px] font-semibold text-text-2 underline"
+                style={{ textUnderlineOffset: 3 }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const dest = leaveGuard
+                  handleDiscard()
+                  setLeaveGuard(null)
+                  navigate(dest)
+                }}
+                className="text-[12px] font-semibold text-text"
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 8,
+                  background: '#FFFFFF',
+                  border: '1px solid rgba(100, 60, 180, 0.13)',
+                }}
+              >
+                Discard
+              </button>
+              <button
+                onClick={() => {
+                  const dest = leaveGuard
+                  handleSave()
+                  setLeaveGuard(null)
+                  navigate(dest)
+                }}
+                className="text-[12px] font-bold"
+                style={{ padding: '6px 14px', borderRadius: 8, background: 'var(--accent)', color: '#1C0840' }}
+              >
+                Save & leave
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
