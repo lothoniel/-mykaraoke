@@ -298,6 +298,12 @@ export default function EditScreen({ songId, navigate, goBack }: Props) {
       setCopyDialog({ kind: 'markers', target, markers: result.markers })
       return
     }
+    // Persist any stripping that happened, even if counts still mismatch
+    if (result.strippedLyrics) {
+      const joined = result.strippedLyrics.join('\n')
+      if (target === 'romaji') setLyricsRomajiText(joined)
+      else setLyricsTranslationText(joined)
+    }
     setCopyDialog({
       kind: 'mismatch',
       target,

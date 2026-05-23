@@ -20,6 +20,7 @@ export type CopyTimingsResult =
       originalCount: number
       versionCount: number
       markers: { index: number; text: string }[]
+      strippedLyrics?: string[] | null
     }
 
 export function copyTimings(
@@ -54,6 +55,7 @@ export function copyTimings(
       originalCount: originalLyrics.length,
       versionCount: effectiveLyrics.length,
       markers,
+      strippedLyrics: stripIndices.size > 0 ? effectiveLyrics : null,
     }
   }
 
