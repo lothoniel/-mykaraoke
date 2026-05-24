@@ -139,6 +139,21 @@ export const IconSpotify = (p: IconProps) => (
   </Stroke>
 )
 
+export const IconYouTube = (p: IconProps) => (
+  <Stroke {...p}>
+    <rect x="2.5" y="6" width="19" height="12" rx="3" />
+    <path d="M10.5 9.5l4.5 2.5-4.5 2.5z" fill="currentColor" />
+  </Stroke>
+)
+
+export const IconImage = (p: IconProps) => (
+  <Stroke {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2.5" />
+    <circle cx="9" cy="10" r="1.5" />
+    <path d="M21 16l-5-5-9 9" />
+  </Stroke>
+)
+
 export const IconTrash = (p: IconProps) => (
   <Stroke {...p}>
     <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />

@@ -18,6 +18,9 @@ import {
   IconHeartFilled,
   IconShuffle,
   IconChevR,
+  IconYouTube,
+  IconSpotify,
+  IconImage,
 } from '../atoms/icons'
 
 type Props = {
@@ -27,6 +30,7 @@ type Props = {
 }
 
 type Mode = 'youtube' | 'spotify'
+type View = 'art' | 'youtube' | 'spotify'
 
 function lyricsForVersion(s: Song, v: LyricVersion): string[] {
   if (v === 'romanized') return s.lyricsRomanized ?? []
@@ -47,10 +51,10 @@ export default function MobileNowPlaying({ songId, navigate: _navigate, goBack }
   const spotifyId = `mob-sp-${uid}`
 
   const [song, setSong] = useState<Song | null>(null)
-  const [mode, setMode] = useState<Mode>('youtube')
+  const [view, setView] = useState<View>('art')
+  const [lastMode, setLastMode] = useState<Mode>('youtube')
   const [tab, setTab] = useState<LyricVersion>(getLyricSettings().primary)
   const [currentTime, setCurrentTime] = useState(0)
-  const [showVideo, setShowVideo] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const markedRef = useRef(false)
   const lyricSettings = useMemo(() => getLyricSettings(), [])
@@ -62,7 +66,8 @@ export default function MobileNowPlaying({ songId, navigate: _navigate, goBack }
       setSong(s)
       const hasYt = !!extractVideoId(s.youtubeLink ?? '')
       const hasSp = !!s.spotifyTrackId
-      setMode(hasYt ? 'youtube' : hasSp ? 'spotify' : 'youtube')
+      setLastMode(hasYt ? 'youtube' : hasSp ? 'spotify' : 'youtube')
+      setView('art')
       const avail: LyricVersion[] = []
       if (s.lyrics.length > 0) avail.push('original')
       if ((s.lyricsRomanized?.length ?? 0) > 0) avail.push('romanized')
@@ -73,6 +78,7 @@ export default function MobileNowPlaying({ songId, navigate: _navigate, goBack }
   }, [songId])
 
   const ytVideoId = song ? extractVideoId(song.youtubeLink ?? '') : null
+  const mode: Mode = view === 'art' ? lastMode : view
   const yt = useYouTube(ytId, mode === 'youtube' ? ytVideoId : null)
   const sp = useSpotifyEmbed(spotifyId, mode === 'spotify' ? (song?.spotifyTrackId ?? null) : null)
 
@@ -175,7 +181,24 @@ export default function MobileNowPlaying({ songId, navigate: _navigate, goBack }
 
   const isPlaying = mode === 'youtube' ? yt.playerState === 'playing' : !sp.isPaused
   const [g1, g2, g3] = getSongGradient(song.id)
-  const hasBothPlayers = !!ytVideoId && !!song.spotifyTrackId
+  const hasYt = !!ytVideoId
+  const hasSp = !!song.spotifyTrackId
+  const showVideo = view !== 'art'
+
+  const viewOrder: View[] = ['art']
+  if (hasYt) viewOrder.push('youtube')
+  if (hasSp) viewOrder.push('spotify')
+  const nextView = viewOrder.length > 1
+    ? viewOrder[(viewOrder.indexOf(view) + 1) % viewOrder.length]
+    : null
+  const nextIcon =
+    nextView === 'youtube' ? <IconYouTube size={20} /> :
+    nextView === 'spotify' ? <IconSpotify size={20} /> :
+    nextView === 'art' ? <IconImage size={20} /> : null
+  const nextLabel =
+    nextView === 'youtube' ? 'Show video' :
+    nextView === 'spotify' ? 'Show Spotify embed' :
+    nextView === 'art' ? 'Show artwork' : 'Switch view'
 
   return (
     <div style={{ position: 'relative', paddingBottom: 24 }}>
@@ -275,35 +298,6 @@ export default function MobileNowPlaying({ songId, navigate: _navigate, goBack }
             }}
           />
         )}
-        {(ytVideoId || song.spotifyTrackId) && (
-          <button
-            onClick={() => setShowVideo((v) => !v)}
-            aria-label={showVideo ? 'Show artwork' : 'Show video'}
-            style={{
-              all: 'unset',
-              cursor: 'pointer',
-              position: 'absolute',
-              top: 8,
-              right: 8,
-              width: 36,
-              height: 24,
-              borderRadius: 999,
-              background: 'rgba(255,255,255,0.85)',
-              color: BB.ink,
-              fontFamily: 'var(--bb-font-display)',
-              fontWeight: 700,
-              fontSize: 10,
-              letterSpacing: 0.4,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
-              zIndex: 2,
-            }}
-          >
-            {showVideo ? 'art' : 'vid'}
-          </button>
-        )}
       </div>
 
       <div style={{ marginTop: 18, textAlign: 'center' }}>
@@ -351,7 +345,7 @@ export default function MobileNowPlaying({ songId, navigate: _navigate, goBack }
                 key={v.realIdx}
                 style={{
                   opacity: v.isCurrent ? 1 : v.isPast ? 0.3 : 0.55,
-                  transition: 'opacity 0.2s',
+                  transition: 'opacity 0.35s ease',
                 }}
               >
                 <div
@@ -362,10 +356,12 @@ export default function MobileNowPlaying({ songId, navigate: _navigate, goBack }
                     lineHeight: 1.25,
                     letterSpacing: -0.3,
                     color: v.isCurrent ? BB.primary : BB.ink,
+                    transition: 'font-size 0.35s ease, color 0.3s ease, text-shadow 0.3s ease',
                     textShadow:
                       v.isCurrent && lyricSettings.glow
                         ? `0 0 20px ${lyricSettings.hlColor}`
-                        : undefined,
+                        : '0 0 0px transparent',
+                    wordBreak: 'break-word',
                   }}
                 >
                   {v.text}
@@ -415,24 +411,18 @@ export default function MobileNowPlaying({ songId, navigate: _navigate, goBack }
           gap: 26,
         }}
       >
-        {hasBothPlayers ? (
+        {nextView ? (
           <BubbleIconBtn
             color={BB.surface}
             ink={BB.ink}
             size={48}
-            onClick={() => setMode(mode === 'youtube' ? 'spotify' : 'youtube')}
-            ariaLabel="Switch player"
+            onClick={() => {
+              if (nextView !== 'art') setLastMode(nextView)
+              setView(nextView)
+            }}
+            ariaLabel={nextLabel}
           >
-            <span
-              style={{
-                fontFamily: 'var(--bb-font-display)',
-                fontWeight: 700,
-                fontSize: 10,
-                letterSpacing: 0.4,
-              }}
-            >
-              {mode === 'youtube' ? 'YT' : 'SP'}
-            </span>
+            {nextIcon}
           </BubbleIconBtn>
         ) : (
           <BubbleIconBtn color={BB.surface} ink={BB.ink2} size={48} ariaLabel="Shuffle (coming soon)">
