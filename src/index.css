@@ -35,3 +35,23 @@ body {
   height: 100%;
   border: none;
 }
+
+/* Bubblepop mobile mode — scoped under .mobile-mode on <body>.
+   Variables exposed for ad-hoc use; bulk styling lives in the bb-* Tailwind
+   tokens. Bg gradient replaces the desktop solid color when in mobile mode. */
+body.mobile-mode {
+  background: radial-gradient(120% 60% at 100% 0%, #FFE2EA, #FFF1F4 60%);
+  color: #3A1740;
+  font-family: 'Quicksand', system-ui, sans-serif;
+  --bb-font: 'Quicksand', system-ui, sans-serif;
+  --bb-font-display: 'Lilita One', 'Quicksand', system-ui, sans-serif;
+  --bb-font-script: 'Shadows Into Light', cursive;
+}
+
+body.mobile-mode .yt-frame iframe,
+body.mobile-mode .sp-frame iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}

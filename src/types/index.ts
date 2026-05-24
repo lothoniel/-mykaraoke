@@ -19,6 +19,7 @@ export type Song = {
   timingsTranslation?: Timing[]
   isFavorite: boolean
   createdAt: Date
+  lastPlayedAt?: Date
   // Spotify-fetched metadata (cached at add time)
   duration?: number // milliseconds
   releaseDate?: string
@@ -29,6 +30,7 @@ export type Song = {
 export type Screen =
   | { name: 'home' }
   | { name: 'library' }
+  | { name: 'search' }
   | { name: 'add' }
   | { name: 'timing'; songId: string; version?: 'original' | 'romanized' | 'translation' }
   | { name: 'playback'; songId: string }

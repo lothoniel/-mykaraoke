@@ -23,6 +23,9 @@ class MyKaraokeDB extends Dexie {
         }
       }),
     )
+    this.version(3).stores({
+      songs: 'id, title, artist, isFavorite, createdAt',
+    })
   }
 }
 

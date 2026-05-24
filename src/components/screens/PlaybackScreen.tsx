@@ -3,6 +3,7 @@ import * as db from '../../hooks/useDB'
 import { useSpotifyEmbed } from '../../hooks/useSpotifyEmbed'
 import { useYouTube } from '../../hooks/useYouTube'
 import { getLyricSettings } from '../../lib/settings'
+import { findCurrentLineIndex } from '../../lib/lyrics'
 import { extractVideoId, formatSeconds } from '../../lib/youtube'
 import type { Screen, Song } from '../../types'
 
@@ -71,15 +72,6 @@ function SpotifyIcon({ size = 14, color = 'currentColor' }: { size?: number; col
       <path d="M8 11.5c2.5-1 5.5-1 8 0M7 15c3-1.5 7-1.5 10 0M9 8.5c2-0.5 5-0.5 7 0" />
     </svg>
   )
-}
-
-function findCurrentLineIndex(timings: Song['timings'], currentTime: number): number {
-  let idx = -1
-  for (const t of timings) {
-    if (t.timestamp <= currentTime) idx = t.lineIndex
-    else break
-  }
-  return idx
 }
 
 function ProgressBar({
@@ -178,8 +170,10 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
   const [relatedTab, setRelatedTab] = useState<'artist' | 'foryou'>('artist')
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const markedPlayedRef = useRef(false)
 
   useEffect(() => {
+    markedPlayedRef.current = false
     db.getSong(songId).then((s) => {
       if (s) {
         setSong(s)
@@ -211,6 +205,10 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
   useEffect(() => {
     if (playerMode !== 'youtube') return
     if (playerState === 'playing') {
+      if (!markedPlayedRef.current) {
+        markedPlayedRef.current = true
+        db.markPlayed(songId).catch(() => {})
+      }
       intervalRef.current = setInterval(() => {
         setCurrentTime(getCurrentTime())
       }, 150)
@@ -220,7 +218,15 @@ export default function PlaybackScreen({ songId, version, navigate, goBack }: Pr
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
-  }, [playerState, getCurrentTime, playerMode])
+  }, [playerState, getCurrentTime, playerMode, songId])
+
+  useEffect(() => {
+    if (playerMode !== 'spotify') return
+    if (!spotifyEmbed.isPaused && !markedPlayedRef.current) {
+      markedPlayedRef.current = true
+      db.markPlayed(songId).catch(() => {})
+    }
+  }, [spotifyEmbed.isPaused, playerMode, songId])
 
   const displayTime = playerMode === 'youtube' ? currentTime : spotifyEmbed.position
 

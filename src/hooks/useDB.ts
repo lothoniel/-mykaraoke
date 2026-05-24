@@ -61,6 +61,28 @@ export async function getFavorites(): Promise<Song[]> {
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 }
 
+export async function markPlayed(id: string): Promise<void> {
+  await db.songs.update(id, { lastPlayedAt: new Date() })
+}
+
+export async function getRecentlySung(limit = 5): Promise<Song[]> {
+  const all = await db.songs.toArray()
+  return all
+    .filter((s) => s.lastPlayedAt)
+    .sort(
+      (a, b) =>
+        new Date(b.lastPlayedAt!).getTime() - new Date(a.lastPlayedAt!).getTime(),
+    )
+    .slice(0, limit)
+}
+
+export async function getContinueSong(): Promise<Song | undefined> {
+  const recent = await getRecentlySung(1)
+  if (recent[0]) return recent[0]
+  const all = await db.songs.orderBy('createdAt').reverse().limit(1).toArray()
+  return all[0]
+}
+
 export async function clearAllSongs(): Promise<void> {
   await db.songs.clear()
 }
